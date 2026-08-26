@@ -1,0 +1,27 @@
+# 环境
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# 运行产物
+data/*.db
+data/*.db-journal
+reports/*.md
+
+# 保留空目录
+!data/.gitkeep
+!reports/.gitkeep
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

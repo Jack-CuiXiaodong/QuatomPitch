@@ -1,0 +1,181 @@
+{% set c = r.company %}
+{% set q = r.quote %}
+{% set v = r.valuation %}
+# {{ r.ticker }}{% if c and c.name %} · {{ c.name }}{% endif %} — 研究报告
+
+> 生成时间：{{ r.generated_at }}
+> 数据来源：SEC EDGAR · yfinance · FRED · Yahoo Finance News
+> 本报告为结构化数据汇编，供 AI 大模型做进一步深度分析，不构成投资建议。
+
+---
+
+## 一、公司概况
+
+| 项目 | 内容 |
+|------|------|
+| 代码 | {{ r.ticker }} |
+| 名称 | {{ c.name if c and c.name else "—" }} |
+| 行业板块 | {{ c.sector if c and c.sector else "—" }} |
+| 细分行业 | {{ c.industry if c and c.industry else "—" }} |
+| 交易所 | {{ c.exchange if c and c.exchange else "—" }} |
+| 国家 | {{ c.country if c and c.country else "—" }} |
+| 员工数 | {{ c.employees | num(0) if c and c.employees else "—" }} |
+| CIK | {{ (r.filings[0].cik if r.filings else None) or "—" }} |
+| 官网 | {{ c.website if c and c.website else "—" }} |
+
+{% if c and c.description %}
+**业务简介**：{{ c.description }}
+{% endif %}
+
+---
+
+## 二、实时行情
+
+| 指标 | 数值 |
+|------|------|
+| 现价 | {{ q.price | money(q.currency + " " if q and q.currency else "$") if q else "—" }} |
+| 市值 | {{ q.market_cap | money if q else "—" }} |
+| 流通股数 | {{ q.shares_outstanding | shares if q else "—" }} |
+| 日内区间 | {{ q.day_low | num if q else "—" }} – {{ q.day_high | num if q else "—" }} |
+| 52 周区间 | {{ q.week52_low | num if q else "—" }} – {{ q.week52_high | num if q else "—" }} |
+| 平均成交量 | {{ q.avg_volume | shares if q else "—" }} |
+| Beta | {{ q.beta | num if q else "—" }} |
+| 股息率 | {{ (q.dividend_yield) | pct if q and q.dividend_yield else "—" }} |
+
+---
+
+## 三、估值指标
+
+> 优先按财报自算，缺失项回退 yfinance 现成指标。仅作数据呈现，不做筛选判断。
+
+| 指标 | 数值 | 指标 | 数值 |
+|------|------|------|------|
+| 市盈率 P/E (TTM) | {{ v.pe_trailing | num if v else "—" }} | 预期 P/E | {{ v.pe_forward | num if v else "—" }} |
+| 市净率 P/B | {{ v.pb | num if v else "—" }} | 市销率 P/S | {{ v.ps | num if v else "—" }} |
+| EV/EBITDA | {{ v.ev_ebitda | num if v else "—" }} | PEG | {{ v.peg | num if v else "—" }} |
+| ROE | {{ v.roe | pct if v else "—" }} | 净利率 | {{ v.net_margin | pct if v else "—" }} |
+| 毛利率 | {{ v.gross_margin | pct if v else "—" }} | 资产负债率(D/E) | {{ v.debt_to_equity | num if v else "—" }} |
+| 流动比率 | {{ v.current_ratio | num if v else "—" }} | 企业价值 EV | {{ v.enterprise_value | money if v else "—" }} |
+
+---
+
+## 四、年度财务数据（利润表）
+
+{% if r.annual_financials %}
+| 报告期 | 营收 | 毛利 | 营业利润 | EBITDA | 净利润 | 稀释EPS |
+|--------|------|------|----------|--------|--------|---------|
+{% for p in r.annual_financials %}
+| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.gross_profit | money }} | {{ p.operating_income | money }} | {{ p.ebitda | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} |
+{% endfor %}
+
+### 资产负债与现金流（年度）
+
+| 报告期 | 总资产 | 总负债 | 股东权益 | 总债务 | 现金 | 经营现金流 | 自由现金流 |
+|--------|--------|--------|----------|--------|------|------------|------------|
+{% for p in r.annual_financials %}
+| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.total_liabilities | money }} | {{ p.total_equity | money }} | {{ p.total_debt | money }} | {{ p.cash_and_equivalents | money }} | {{ p.operating_cash_flow | money }} | {{ p.free_cash_flow | money }} |
+{% endfor %}
+{% else %}
+_无年度财务数据。_
+{% endif %}
+
+---
+
+## 五、季度财务数据（近期）
+
+{% if r.quarterly_financials %}
+| 报告期 | 营收 | 净利润 | 稀释EPS | 经营现金流 |
+|--------|------|--------|---------|------------|
+{% for p in r.quarterly_financials %}
+| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} | {{ p.operating_cash_flow | money }} |
+{% endfor %}
+{% else %}
+_无季度财务数据。_
+{% endif %}
+
+---
+
+## 六、重大信息 · 内部人交易（高管/董事增减持，SEC Form 4）
+
+{% if r.insider_trades %}
+{% set ns = namespace(buy_shares=0.0, buy_value=0.0, sell_shares=0.0, sell_value=0.0, buys=0, sells=0) %}
+{% for t in r.insider_trades %}
+{% if t.acquired_disposed == "A" %}
+{% set ns.buys = ns.buys + 1 %}
+{% set ns.buy_shares = ns.buy_shares + (t.shares or 0) %}
+{% set ns.buy_value = ns.buy_value + (t.value or 0) %}
+{% elif t.acquired_disposed == "D" %}
+{% set ns.sells = ns.sells + 1 %}
+{% set ns.sell_shares = ns.sell_shares + (t.shares or 0) %}
+{% set ns.sell_value = ns.sell_value + (t.value or 0) %}
+{% endif %}
+{% endfor %}
+
+**汇总（近 {{ r.insider_trades | length }} 笔）**：增持 {{ ns.buys }} 笔 / {{ ns.buy_shares | shares }} 股 / {{ ns.buy_value | money }}；减持 {{ ns.sells }} 笔 / {{ ns.sell_shares | shares }} 股 / {{ ns.sell_value | money }}。
+
+| 日期 | 内部人 | 职务 | 方向 | 代码 | 股数 | 价格 | 金额 | 交易后持股 |
+|------|--------|------|------|------|------|------|------|------------|
+{% for t in r.insider_trades %}
+| {{ t.transaction_date or "—" }} | {{ t.insider_name or "—" }} | {{ t.title or "—" }} | {{ t.direction }} | {{ t.transaction_code or "—" }} | {{ t.shares | shares }} | {{ t.price | num if t.price else "—" }} | {{ t.value | money }} | {{ t.shares_owned_after | shares }} |
+{% endfor %}
+
+> 交易代码说明：P=公开市场买入，S=公开市场卖出，A=授予/获得，M=期权行权，F=纳税扣股，G=赠与。方向 A=增持、D=减持。
+{% else %}
+_近期无 Form 4 内部人交易记录（或未采集到）。_
+{% endif %}
+
+---
+
+## 七、SEC 报送索引（10-K / 10-Q / 8-K）
+
+{% if r.filings %}
+| 日期 | 类型 | 报告期 | 说明 | 链接 |
+|------|------|--------|------|------|
+{% for f in r.filings %}
+| {{ f.filing_date }} | {{ f.form_type }} | {{ f.report_date or "—" }} | {{ f.description or "—" }} | {% if f.url %}[查看]({{ f.url }}){% else %}—{% endif %} |
+{% endfor %}
+{% else %}
+_无 SEC 报送记录。_
+{% endif %}
+
+---
+
+{% if r.macro %}
+## 八、宏观环境（FRED）
+
+| 指标 | 最新值 | 单位 | 日期 |
+|------|--------|------|------|
+{% for m in r.macro %}
+| {{ m.label }} ({{ m.series_id }}) | {{ m.value | num }} | {{ m.units or "" }} | {{ m.date or "—" }} |
+{% endfor %}
+
+---
+{% endif %}
+
+## {% if r.macro %}九{% else %}八{% endif %}、市场舆情（Yahoo Finance News）
+
+{% if r.news %}
+{% for n in r.news %}
+- {% if n.url %}[{{ n.title }}]({{ n.url }}){% else %}{{ n.title }}{% endif %}{% if n.publisher %} — *{{ n.publisher }}*{% endif %}{% if n.published_at %} ({{ n.published_at }}){% endif %}
+{% endfor %}
+{% else %}
+_无新闻数据。_
+{% endif %}
+
+---
+
+## 附：数据来源与免责声明
+
+- **SEC EDGAR**：10-K/10-Q/8-K 报送、Form 4 内部人交易（官方数据）。
+- **yfinance**：实时行情、市值、三大报表（Yahoo Finance 非官方接口）。
+- **FRED**：宏观经济指标（需 API key）。
+- **Yahoo Finance News**：市场舆情。
+
+{% if r.warnings %}
+**采集告警**：
+{% for w in r.warnings %}
+- {{ w }}
+{% endfor %}
+{% endif %}
+
+本报告由 QuatomPitch 自动生成，仅供研究参考，不构成任何投资建议。数据可能存在延迟或口径差异，请以官方披露为准。

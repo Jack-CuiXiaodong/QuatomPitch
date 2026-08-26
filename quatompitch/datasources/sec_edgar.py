@@ -1,0 +1,239 @@
+"""SEC EDGAR 数据源：CIK 映射、报送索引（10-K/10-Q/8-K）、Form 4 内部人交易。
+
+免 API key，但所有请求必须带 User-Agent（SEC 强制），并遵守限速（约 10 req/s）。
+"""
+from __future__ import annotations
+
+import time
+import xml.etree.ElementTree as ET
+from typing import Any, Optional
+
+import httpx
+
+from ..config import settings
+from ..models import Filing, InsiderTrade
+from .base import DataSource
+
+SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
+ARCHIVE_BASE = "https://www.sec.gov/Archives/edgar/data"
+
+# 关注的报送类型
+INDEX_FORMS = {"10-K", "10-Q", "8-K", "20-F", "40-F"}
+
+_TICKER_CACHE: dict[str, str] = {}
+
+
+class SecClient:
+    """带 User-Agent 与限速的 SEC HTTP 客户端。"""
+
+    def __init__(self) -> None:
+        self._client = httpx.Client(
+            headers={
+                "User-Agent": settings.sec_user_agent,
+                "Accept-Encoding": "gzip, deflate",
+            },
+            timeout=settings.http_timeout,
+            follow_redirects=True,
+        )
+        self._min_interval = 1.0 / max(settings.sec_rate_limit_per_sec, 1.0)
+        self._last = 0.0
+
+    def _throttle(self) -> None:
+        elapsed = time.monotonic() - self._last
+        if elapsed < self._min_interval:
+            time.sleep(self._min_interval - elapsed)
+        self._last = time.monotonic()
+
+    def get_json(self, url: str) -> Any:
+        self._throttle()
+        r = self._client.get(url)
+        r.raise_for_status()
+        return r.json()
+
+    def get_text(self, url: str) -> str:
+        self._throttle()
+        r = self._client.get(url)
+        r.raise_for_status()
+        return r.text
+
+    def close(self) -> None:
+        self._client.close()
+
+
+def resolve_cik(client: SecClient, ticker: str) -> Optional[str]:
+    """ticker → 10 位零填充 CIK。"""
+    ticker = ticker.upper()
+    if not _TICKER_CACHE:
+        data = client.get_json(SEC_TICKERS_URL)
+        for row in data.values():
+            _TICKER_CACHE[str(row["ticker"]).upper()] = str(row["cik_str"])
+    cik = _TICKER_CACHE.get(ticker)
+    return cik.zfill(10) if cik else None
+
+
+def _text(el: Optional[ET.Element], path: str) -> Optional[str]:
+    if el is None:
+        return None
+    found = el.find(path)
+    return found.text.strip() if found is not None and found.text else None
+
+
+def _float(el: Optional[ET.Element], path: str) -> Optional[float]:
+    v = _text(el, path)
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+def _parse_form4_xml(xml_text: str, ticker: str, filing_url: str) -> list[InsiderTrade]:
+    """解析 Form 4 XML，抽取非衍生品（普通股）交易。"""
+    trades: list[InsiderTrade] = []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return trades
+
+    owner_name = _text(root, ".//reportingOwner/reportingOwnerId/rptOwnerName")
+    rel = root.find(".//reportingOwner/reportingOwnerRelationship")
+    title_parts = []
+    if rel is not None:
+        if _text(rel, "isDirector") in ("1", "true"):
+            title_parts.append("Director")
+        if _text(rel, "isOfficer") in ("1", "true"):
+            title_parts.append(_text(rel, "officerTitle") or "Officer")
+        if _text(rel, "isTenPercentOwner") in ("1", "true"):
+            title_parts.append("10% Owner")
+    title = ", ".join([p for p in title_parts if p]) or None
+
+    for txn in root.findall(".//nonDerivativeTable/nonDerivativeTransaction"):
+        shares = _float(txn, "transactionAmounts/transactionShares/value")
+        price = _float(txn, "transactionAmounts/transactionPricePerShare/value")
+        value = shares * price if (shares is not None and price is not None) else None
+        trades.append(
+            InsiderTrade(
+                ticker=ticker.upper(),
+                insider_name=owner_name,
+                title=title,
+                transaction_date=_text(txn, "transactionDate/value"),
+                transaction_code=_text(txn, "transactionCoding/transactionCode"),
+                acquired_disposed=_text(
+                    txn, "transactionAmounts/transactionAcquiredDisposedCode/value"
+                ),
+                shares=shares,
+                price=price,
+                value=value,
+                shares_owned_after=_float(
+                    txn, "postTransactionAmounts/sharesOwnedFollowingTransaction/value"
+                ),
+                is_direct=(
+                    _text(txn, "ownershipNature/directOrIndirectOwnership/value") == "D"
+                ),
+                filing_url=filing_url,
+            )
+        )
+    return trades
+
+
+class SecEdgarSource(DataSource):
+    name = "sec"
+
+    def __init__(self, max_form4: int = 25, max_index_filings: int = 15) -> None:
+        self.max_form4 = max_form4
+        self.max_index_filings = max_index_filings
+
+    def fetch(self, ticker: str) -> dict[str, Any]:
+        client = SecClient()
+        try:
+            cik = resolve_cik(client, ticker)
+            if not cik:
+                return {"cik": None, "filings": [], "insider_trades": [],
+                        "warning": f"SEC 未找到 {ticker} 的 CIK"}
+
+            subs = client.get_json(SUBMISSIONS_URL.format(cik10=cik))
+            recent = subs.get("filings", {}).get("recent", {})
+            forms = recent.get("form", [])
+            dates = recent.get("filingDate", [])
+            report_dates = recent.get("reportDate", [])
+            accessions = recent.get("accessionNumber", [])
+            primary_docs = recent.get("primaryDocument", [])
+            primary_desc = recent.get("primaryDocDescription", [])
+
+            cik_int = str(int(cik))  # 去零填充用于 Archives 路径
+            filings: list[Filing] = []
+            form4_refs: list[tuple[str, str]] = []  # (accession_nodash, primary_doc)
+
+            for i, form in enumerate(forms):
+                acc = accessions[i] if i < len(accessions) else ""
+                acc_nodash = acc.replace("-", "")
+                pdoc = primary_docs[i] if i < len(primary_docs) else ""
+                url = (
+                    f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/{pdoc}"
+                    if pdoc else
+                    f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/"
+                )
+
+                if form in INDEX_FORMS and len(filings) < self.max_index_filings:
+                    filings.append(
+                        Filing(
+                            ticker=ticker.upper(),
+                            cik=cik,
+                            form_type=form,
+                            filing_date=dates[i] if i < len(dates) else "",
+                            report_date=report_dates[i] if i < len(report_dates) else None,
+                            accession_no=acc,
+                            primary_doc=pdoc,
+                            url=url,
+                            description=primary_desc[i] if i < len(primary_desc) else None,
+                        )
+                    )
+
+                if form == "4" and len(form4_refs) < self.max_form4:
+                    form4_refs.append((acc_nodash, pdoc))
+
+            # 解析 Form 4 明细
+            insider_trades: list[InsiderTrade] = []
+            for acc_nodash, pdoc in form4_refs:
+                xml_url = self._find_form4_xml(client, cik_int, acc_nodash, pdoc)
+                if not xml_url:
+                    continue
+                try:
+                    xml_text = client.get_text(xml_url)
+                except httpx.HTTPError:
+                    continue
+                insider_trades.extend(
+                    _parse_form4_xml(xml_text, ticker, xml_url)
+                )
+
+            return {
+                "cik": cik,
+                "filings": filings,
+                "insider_trades": insider_trades,
+            }
+        finally:
+            client.close()
+
+    def _find_form4_xml(
+        self, client: SecClient, cik_int: str, acc_nodash: str, pdoc: str
+    ) -> Optional[str]:
+        """定位 Form 4 的原始 XML 文档 URL。"""
+        # primaryDocument 若本身是 xml，直接用
+        if pdoc and pdoc.lower().endswith(".xml"):
+            return f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/{pdoc}"
+        # 否则读取该报送目录的 index.json，找非 xslt 的 xml 文件
+        try:
+            idx = client.get_json(
+                f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/index.json"
+            )
+        except httpx.HTTPError:
+            return None
+        items = idx.get("directory", {}).get("item", [])
+        for it in items:
+            nm = it.get("name", "")
+            if nm.lower().endswith(".xml") and not nm.lower().startswith("r") \
+                    and "xslt" not in nm.lower():
+                return f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/{nm}"
+        return None
