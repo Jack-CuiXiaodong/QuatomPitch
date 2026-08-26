@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FinancialPeriod(BaseModel):
@@ -48,9 +48,14 @@ class FinancialPeriod(BaseModel):
     investing_cash_flow: Optional[float] = None
     financing_cash_flow: Optional[float] = None
     capital_expenditure: Optional[float] = None
+    capitalized_software: Optional[float] = None  # 资本化软件/无形资产支出
     free_cash_flow: Optional[float] = None
     dividends_paid: Optional[float] = None
     share_repurchase: Optional[float] = None
+
+    # 估值建模常用但容易被忽略的两项
+    share_based_compensation: Optional[float] = None  # 股权激励费用（非现金但摊薄股东）
+    deferred_revenue: Optional[float] = None          # 合同负债/递延收入（订阅公司关键）
 
     # 溯源：该期数据取自哪份报送（XBRL 独有）
     form_type: Optional[str] = None      # 10-K / 10-Q
@@ -65,6 +70,11 @@ class Valuation(BaseModel):
 
     ticker: str
     as_of_date: str
+
+    # 每个指标的口径与来源，如 "FY2025 自算：净利润 ÷ 平均股东权益"。
+    # 自算指标用财年数、yfinance 兜底指标多为 TTM，两者混在一张表里若不标注，
+    # 下游模型会把不同时间窗口的分子分母当成同一口径去横向比较。
+    bases: dict[str, str] = Field(default_factory=dict)
     pe_trailing: Optional[float] = None
     pe_forward: Optional[float] = None
     roe: Optional[float] = None

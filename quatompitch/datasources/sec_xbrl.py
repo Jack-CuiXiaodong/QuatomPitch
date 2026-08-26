@@ -62,6 +62,13 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
     ),
     "short_term_investments": ("ShortTermInvestments", "MarketableSecuritiesCurrent"),
     "shares_outstanding": ("CommonStockSharesOutstanding", "CommonStockSharesIssued"),
+    # 合同负债 / 递延收入：订阅制公司的收入确认与收款存在时间差，
+    # 只看已确认收入会漏掉订单端的先行信号
+    "deferred_revenue": (
+        "ContractWithCustomerLiabilityCurrent",
+        "DeferredRevenueCurrent",
+        "ContractWithCustomerLiability",
+    ),
     # 现金流（duration）
     "operating_cash_flow": (
         "NetCashProvidedByUsedInOperatingActivities",
@@ -72,6 +79,20 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
     "capital_expenditure": (
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PaymentsToAcquireProductiveAssets",
+    ),
+    # 软件/无形资产的资本化支出。软件公司常把它算进资本开支，漏掉会高估自由现金流。
+    # 注意：不少公司（如 DUOL）用的是自定义扩展标签，companyfacts 接口不暴露，
+    # 那种情况下这里取不到值，free_cash_flow 会相应偏高——列名已写明公式。
+    "capitalized_software": (
+        "PaymentsForSoftware",
+        "PaymentsForCapitalizedComputerSoftwareCosts",
+        "PaymentsToDevelopSoftware",
+        "PaymentsToAcquireIntangibleAssets",
+    ),
+    # 股权激励：非现金费用，但真实摊薄股东权益，估值建模必看
+    "share_based_compensation": (
+        "ShareBasedCompensation",
+        "AllocatedShareBasedCompensationExpense",
     ),
     "dividends_paid": ("PaymentsOfDividendsCommonStock", "PaymentsOfDividends"),
     "share_repurchase": (
@@ -85,7 +106,7 @@ _INSTANT_FIELDS = {
     "total_assets", "current_assets", "inventory", "receivables",
     "total_liabilities", "current_liabilities", "total_equity",
     "long_term_debt", "cash_and_equivalents", "short_term_investments",
-    "shares_outstanding",
+    "shares_outstanding", "deferred_revenue",
 }
 
 # 每股类科目单位不是 USD 而是 USD/shares，股数是 shares
@@ -203,9 +224,16 @@ class SecXbrlSource(DataSource):
                 fiscal_period=vals.get("__fp__"),
                 **clean,
             )
-            # 自由现金流：XBRL 没有现成标签，用经营现金流 - 资本开支
+            # 自由现金流：XBRL 没有现成标签，只能自算。
+            # 公式 = 经营现金流 − 购建固定资产 − 资本化软件/无形资产。
+            # 报告列名写明了这个公式：公司自己披露的 FCF 口径可能不同（有的还要
+            # 减内容成本、有的用自定义标签导致这里取不到），差异以 10-K 原文为准。
             if p.operating_cash_flow is not None and p.capital_expenditure is not None:
-                p.free_cash_flow = p.operating_cash_flow - abs(p.capital_expenditure)
+                p.free_cash_flow = (
+                    p.operating_cash_flow
+                    - abs(p.capital_expenditure)
+                    - abs(p.capitalized_software or 0.0)
+                )
             periods.append(p)
 
         periods.sort(key=lambda x: x.fiscal_date, reverse=True)

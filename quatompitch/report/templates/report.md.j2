@@ -53,15 +53,27 @@
 ## {{ CN[sn.i] }}、估值指标
 
 > 优先按财报自算，缺失项回退 yfinance 现成指标。仅作数据呈现，不做筛选判断。
+>
+> **口径不统一，不要直接横向比较**：自算指标用的是最近**财年**数，yfinance 兜底
+> 指标多为 **TTM**，分子分母的时间窗口不一致。下表「口径」列写明了每个指标实际
+> 用的是哪个窗口、哪个公式，建模前请以该列为准。
 
-| 指标 | 数值 | 指标 | 数值 |
-|------|------|------|------|
-| 市盈率 P/E (TTM) | {{ v.pe_trailing | num if v else "—" }} | 预期 P/E | {{ v.pe_forward | num if v else "—" }} |
-| 市净率 P/B | {{ v.pb | num if v else "—" }} | 市销率 P/S | {{ v.ps | num if v else "—" }} |
-| EV/EBITDA | {{ v.ev_ebitda | num if v else "—" }} | PEG | {{ v.peg | num if v else "—" }} |
-| ROE | {{ v.roe | pct if v else "—" }} | 净利率 | {{ v.net_margin | pct if v else "—" }} |
-| 毛利率 | {{ v.gross_margin | pct if v else "—" }} | 资产负债率(D/E) | {{ v.debt_to_equity | num if v else "—" }} |
-| 流动比率 | {{ v.current_ratio | num if v else "—" }} | 企业价值 EV | {{ v.enterprise_value | money if v else "—" }} |
+{% set b = v.bases if v else {} %}
+
+| 指标 | 数值 | 口径 |
+|------|------|------|
+| 市盈率 P/E | {{ v.pe_trailing | num if v else "—" }} | {{ b.get("pe_trailing", "—") }} |
+| 预期 P/E | {{ v.pe_forward | num if v else "—" }} | {{ b.get("pe_forward", "—") }} |
+| 市净率 P/B | {{ v.pb | num if v else "—" }} | {{ b.get("pb", "—") }} |
+| 市销率 P/S | {{ v.ps | num if v else "—" }} | {{ b.get("ps", "—") }} |
+| EV/EBITDA | {{ v.ev_ebitda | num if v else "—" }} | {{ b.get("ev_ebitda", "—") }} |
+| PEG | {{ v.peg | num if v else "—" }} | {{ b.get("peg", "—") }} |
+| ROE | {{ v.roe | pct if v else "—" }} | {{ b.get("roe", "—") }} |
+| 毛利率 | {{ v.gross_margin | pct if v else "—" }} | {{ b.get("gross_margin", "—") }} |
+| 净利率 | {{ v.net_margin | pct if v else "—" }} | {{ b.get("net_margin", "—") }} |
+| 负债权益比 D/E | {{ v.debt_to_equity | pct if v else "—" }} | {{ b.get("debt_to_equity", "—") }} |
+| 流动比率 | {{ v.current_ratio | num if v else "—" }} | {{ b.get("current_ratio", "—") }} |
+| 企业价值 EV | {{ v.enterprise_value | money if v else "—" }} | {{ b.get("enterprise_value", "—") }} |
 
 ---
 
@@ -114,8 +126,13 @@ _无季度财务数据。_
 {% set sn.i = sn.i + 1 %}
 ## {{ CN[sn.i] }}、SEC XBRL 官方财务数据
 
-> 直接取自公司报给 SEC 的 XBRL 事实，可溯源到具体报送。与上面 yfinance 的口径可交叉验证；
-> 若两者对不上，以本节为准。
+> **原始申报科目**直接取自公司报给 SEC 的 XBRL 事实，可溯源到具体报送，与 yfinance
+> 对不上时以本节为准。
+>
+> 但**自由现金流是本工具自算的派生值**（公式见列名），不是公司申报的科目：各家对
+> 资本开支的口径不同，且不少公司把资本化软件等支出挂在自定义扩展标签下，
+> companyfacts 接口取不到，这种情况下此列会偏高。公司自己披露的 FCF 请以本报告后面
+> 10-K 原文中的口径为准。
 
 {% if r.xbrl_annual %}
 ### 年度（来源：10-K）
@@ -126,17 +143,20 @@ _无季度财务数据。_
 | {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.sga_expense | money }} | {{ p.operating_income | money }} | {{ p.pretax_income | money }} | {{ p.income_tax_expense | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.accession_no or "—" }} |
 {% endfor %}
 
-| 报告期 | 总资产 | 流动资产 | 存货 | 应收账款 | 总负债 | 流动负债 | 股东权益 | 长期负债 | 现金及等价物 |
-|--------|--------|----------|------|----------|--------|----------|----------|----------|--------------|
+| 报告期 | 总资产 | 流动资产 | 存货 | 应收账款 | 总负债 | 流动负债 | 递延收入/合同负债 | 股东权益 | 长期负债 | 现金及等价物 |
+|--------|--------|----------|------|----------|--------|----------|-------------------|----------|----------|--------------|
 {% for p in r.xbrl_annual %}
-| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.current_assets | money }} | {{ p.inventory | money }} | {{ p.receivables | money }} | {{ p.total_liabilities | money }} | {{ p.current_liabilities | money }} | {{ p.total_equity | money }} | {{ p.long_term_debt | money }} | {{ p.cash_and_equivalents | money }} |
+| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.current_assets | money }} | {{ p.inventory | money }} | {{ p.receivables | money }} | {{ p.total_liabilities | money }} | {{ p.current_liabilities | money }} | {{ p.deferred_revenue | money }} | {{ p.total_equity | money }} | {{ p.long_term_debt | money }} | {{ p.cash_and_equivalents | money }} |
 {% endfor %}
 
-| 报告期 | 经营现金流 | 投资现金流 | 筹资现金流 | 资本开支 | 自由现金流 | 分红支出 | 股票回购 | 稀释加权股数 |
-|--------|------------|------------|------------|----------|------------|----------|----------|--------------|
+| 报告期 | 经营现金流 | 投资现金流 | 筹资现金流 | 购建固定资产 | 资本化软件 | 自由现金流<br>(=经营CF−购建固定资产−资本化软件) | 分红支出 | 股票回购 | 股权激励费用 | 稀释加权股数 |
+|--------|------------|------------|------------|--------------|------------|--------------------------------------------|----------|----------|--------------|--------------|
 {% for p in r.xbrl_annual %}
-| {{ p.fiscal_date }} | {{ p.operating_cash_flow | money }} | {{ p.investing_cash_flow | money }} | {{ p.financing_cash_flow | money }} | {{ p.capital_expenditure | money }} | {{ p.free_cash_flow | money }} | {{ p.dividends_paid | money }} | {{ p.share_repurchase | money }} | {{ p.shares_diluted_wtd | shares }} |
+| {{ p.fiscal_date }} | {{ p.operating_cash_flow | money }} | {{ p.investing_cash_flow | money }} | {{ p.financing_cash_flow | money }} | {{ p.capital_expenditure | money }} | {{ p.capitalized_software | money }} | {{ p.free_cash_flow | money }} | {{ p.dividends_paid | money }} | {{ p.share_repurchase | money }} | {{ p.share_based_compensation | money }} | {{ p.shares_diluted_wtd | shares }} |
 {% endfor %}
+
+> 股权激励费用（SBC）是非现金支出，已加回经营现金流，因此**不会**减少上面的自由现金流，
+> 但它通过增发股份真实摊薄股东权益。对 SBC 占比高的公司，只看 FCF 会高估股东可得收益。
 {% endif %}
 
 {% if r.xbrl_quarterly %}
@@ -172,10 +192,10 @@ _未取到 XBRL 财务数据。_
 {% elif t.period_label %}口径：{{ t.period_label }}
 {% endif %}
 
-| 项目 | {{ t.columns | join(" | ") }} |
+| 项目 | {{ t.columns | map("cell") | join(" | ") }} |
 |{{ "---|" * t.width }}
 {% for row in t.rows %}
-| {{ row | join(" | ") }} |
+| {{ row | map("cell") | join(" | ") }} |
 {% endfor %}
 
 来源：[{{ t.source_form }} {{ t.filing_date }}]({{ t.url }})

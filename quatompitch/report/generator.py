@@ -67,6 +67,18 @@ def _fmt_shares(v: Optional[float]) -> str:
     return f"{sign}{a:,.0f}"
 
 
+def _fmt_cell(v) -> str:
+    """表格单元格兜底：任何内容都不该撑破 Markdown 的列结构。
+
+    竖线是列分隔符、换行会直接结束这一行，两者出现在单元格里都会让整张表错位。
+    数据源已做过一轮清洗，这里是最后一道防线（公司名、证券名称都可能带竖线）。
+    """
+    if v is None:
+        return "—"
+    s = str(v).replace("\r", " ").replace("\n", " ")
+    return s.replace("|", "\\|").strip()
+
+
 def _build_env() -> Environment:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -78,6 +90,7 @@ def _build_env() -> Environment:
     env.filters["num"] = _fmt_num
     env.filters["pct"] = _fmt_pct
     env.filters["shares"] = _fmt_shares
+    env.filters["cell"] = _fmt_cell
     return env
 
 

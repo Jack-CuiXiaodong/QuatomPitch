@@ -52,7 +52,7 @@ TENQ_ITEMS = {
 # 因此用「必须是明细表 + 命中主题 + 不命中噪音」三重条件。
 _DETAIL_RE = re.compile(r"\(detail", re.I)
 _TABLE_INCLUDE_RE = re.compile(
-    r"segment|geograph|by market|by region|by major|"
+    r"segment|geograph|by market|by region|by countr|"
     r"product and service|significant product|disaggregat",
     re.I,
 )
@@ -97,6 +97,17 @@ _DATE_CELL_RE = re.compile(r"[A-Z][a-z]{2}\.?\s+\d{1,2},\s+\d{4}")
 
 def _looks_like_date(cell: str) -> bool:
     return bool(_DATE_CELL_RE.search(cell or ""))
+
+
+def _clean_cell(text: str) -> str:
+    """清洗表格单元格。
+
+    SEC 会把 XBRL 的多维成员路径渲染成「Level 1 | Cash Equivalents」这种带竖线
+    的字符串。竖线是 Markdown 的列分隔符，原样输出会当场撑破整张表的列结构，
+    后面所有行全部错位。这里统一换成 · —— 它本来就是「维度串联」的意思。
+    """
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    return re.sub(r"\s*\|\s*", " · ", text)
 
 
 _ITEM_RE = re.compile(r"^[ \t]*Item[ \t]+(\d{1,2}[A-Z]?)[ \t]*[\.\:\-—]?", re.I | re.M)
@@ -359,7 +370,7 @@ class SecDocsSource(DataSource):
         raw: list[list[str]] = []
         for tr in table.find_all("tr"):
             cells = [
-                re.sub(r"\s+", " ", td.get_text(" ").strip())
+                _clean_cell(td.get_text(" "))
                 for td in tr.find_all(["th", "td"])
             ]
             cells = [c for c in cells if c not in ("", "$")]
@@ -386,11 +397,23 @@ class SecDocsSource(DataSource):
             columns, body = raw[1], raw[2:]
 
         # 单独成行的标签有两类：XBRL 轴标签（如 NVIDIA 的「Revenues and
-        # Long-Lived Assets」，在每个真实分组后都重复一次，会把分组名冲掉）
-        # 和真正的分组名（United States、iPhone…）。前者反复出现、后者只出现
-        # 一次，据此区分比枚举关键词可靠。
+        # Long-Lived Assets」，在每个真实分组前都重复一次，会把分组名冲掉）
+        # 和真正的分组名（United States、iPhone…）。
+        #
+        # 光看「是否重复」不够——DUOL 的收入表里 "Other" 作为分组合法地出现两次
+        # （Other 小计一次、Other 残余项一次），当噪音跳过的话 164,147 会被错标成
+        # Subscription，把订阅收入凭空放大一倍。真正的判据是：轴标签出现在**首个
+        # 数据行之前**（它是开表的那个标签），而真实分组必然出现在数据行之后。
         singles = [c[0] for c in body if len(c) == 1]
-        repeated = {s for s in singles if singles.count(s) > 1}
+        axis_label = None
+        for cells in body:
+            if len(cells) > 1:
+                break
+            if axis_label is None:
+                axis_label = cells[0]
+        repeated = set()
+        if axis_label is not None and singles.count(axis_label) > 1:
+            repeated.add(axis_label)
 
         rows: list[list[str]] = []
         group: Optional[str] = None
