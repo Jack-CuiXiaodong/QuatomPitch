@@ -122,32 +122,52 @@ def _parse_form4_xml(xml_text: str, ticker: str, filing_url: str) -> list[Inside
             title_parts.append("10% Owner")
     title = ", ".join([p for p in title_parts if p]) or None
 
-    for txn in root.findall(".//nonDerivativeTable/nonDerivativeTransaction"):
-        shares = _float(txn, "transactionAmounts/transactionShares/value")
-        price = _float(txn, "transactionAmounts/transactionPricePerShare/value")
-        value = shares * price if (shares is not None and price is not None) else None
-        trades.append(
-            InsiderTrade(
-                ticker=ticker.upper(),
-                insider_name=owner_name,
-                title=title,
-                transaction_date=_text(txn, "transactionDate/value"),
-                transaction_code=_text(txn, "transactionCoding/transactionCode"),
-                acquired_disposed=_text(
-                    txn, "transactionAmounts/transactionAcquiredDisposedCode/value"
-                ),
-                shares=shares,
-                price=price,
-                value=value,
-                shares_owned_after=_float(
-                    txn, "postTransactionAmounts/sharesOwnedFollowingTransaction/value"
-                ),
-                is_direct=(
-                    _text(txn, "ownershipNature/directOrIndirectOwnership/value") == "D"
-                ),
-                filing_url=filing_url,
+    # 两张表都要读：普通股走 nonDerivativeTable，期权/权证/RSU 走 derivativeTable。
+    # 有些公司的内部人活动全在衍生品表里（如 SHOP 的认股权证行权），只读前者会
+    # 整份报送漏掉，内部人交易显示为 0。
+    tables = (
+        (".//nonDerivativeTable/nonDerivativeTransaction", False),
+        (".//derivativeTable/derivativeTransaction", True),
+    )
+    for xpath, is_derivative in tables:
+        for txn in root.findall(xpath):
+            shares = _float(txn, "transactionAmounts/transactionShares/value")
+            price = _float(txn, "transactionAmounts/transactionPricePerShare/value")
+            value = (
+                shares * price
+                if (shares is not None and price is not None)
+                else None
             )
-        )
+            trades.append(
+                InsiderTrade(
+                    ticker=ticker.upper(),
+                    insider_name=owner_name,
+                    title=title,
+                    transaction_date=_text(txn, "transactionDate/value"),
+                    transaction_code=_text(txn, "transactionCoding/transactionCode"),
+                    acquired_disposed=_text(
+                        txn, "transactionAmounts/transactionAcquiredDisposedCode/value"
+                    ),
+                    shares=shares,
+                    price=price,
+                    value=value,
+                    shares_owned_after=_float(
+                        txn,
+                        "postTransactionAmounts/sharesOwnedFollowingTransaction/value",
+                    ),
+                    is_direct=(
+                        _text(txn, "ownershipNature/directOrIndirectOwnership/value")
+                        == "D"
+                    ),
+                    filing_url=filing_url,
+                    is_derivative=is_derivative,
+                    security_title=_text(txn, "securityTitle/value"),
+                    exercise_price=_float(txn, "conversionOrExercisePrice/value"),
+                    underlying_shares=_float(
+                        txn, "underlyingSecurity/underlyingSecurityShares/value"
+                    ),
+                )
+            )
     return trades
 
 

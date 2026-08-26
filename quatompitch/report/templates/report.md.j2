@@ -190,9 +190,13 @@ _未取到分部收入表。_
 {% set sn.i = sn.i + 1 %}
 ## {{ CN[sn.i] }}、重大信息 · 内部人交易（高管/董事增减持，SEC Form 4）
 
+{% set common = r.insider_trades | rejectattr("is_derivative") | list %}
+{% set deriv = r.insider_trades | selectattr("is_derivative") | list %}
 {% if r.insider_trades %}
 {% set ns = namespace(buy_shares=0.0, buy_value=0.0, sell_shares=0.0, sell_value=0.0, buys=0, sells=0) %}
-{% for t in r.insider_trades %}
+{#- 汇总只统计普通股：一次 RSU 归属会同时出现在衍生品表（减记 RSU）和普通股表
+    （增记股票），两边都加会重复计数。 -#}
+{% for t in common %}
 {% if t.acquired_disposed == "A" %}
 {% set ns.buys = ns.buys + 1 %}
 {% set ns.buy_shares = ns.buy_shares + (t.shares or 0) %}
@@ -204,16 +208,31 @@ _未取到分部收入表。_
 {% endif %}
 {% endfor %}
 
-**汇总（近 {{ r.insider_trades | length }} 笔）**：增持 {{ ns.buys }} 笔 / {{ ns.buy_shares | shares }} 股 / {{ ns.buy_value | money if ns.buy_value else "—" }}；减持 {{ ns.sells }} 笔 / {{ ns.sell_shares | shares }} 股 / {{ ns.sell_value | money if ns.sell_value else "—" }}。
+**汇总（普通股 {{ common | length }} 笔，另有衍生品 {{ deriv | length }} 笔）**：增持 {{ ns.buys }} 笔 / {{ ns.buy_shares | shares }} 股 / {{ ns.buy_value | money if ns.buy_value else "—" }}；减持 {{ ns.sells }} 笔 / {{ ns.sell_shares | shares }} 股 / {{ ns.sell_value | money if ns.sell_value else "—" }}。
+
+{% if common %}
+### 普通股交易
 
 | 日期 | 内部人 | 职务 | 方向 | 代码 | 股数 | 价格 | 金额 | 交易后持股 |
 |------|--------|------|------|------|------|------|------|------------|
-{% for t in r.insider_trades %}
+{% for t in common %}
 | {{ t.transaction_date or "—" }} | {{ t.insider_name or "—" }} | {{ t.title or "—" }} | {{ t.direction }} | {{ t.transaction_code or "—" }} | {{ t.shares | shares }} | {{ t.price | num if t.price else "—" }} | {{ t.value | money }} | {{ t.shares_owned_after | shares }} |
 {% endfor %}
+{% endif %}
 
-> 交易代码说明：P=公开市场买入，S=公开市场卖出，A=授予/获得，M=期权行权，F=纳税扣股，G=赠与。方向 A=增持、D=减持。
-> 增持金额常为「—」：M（期权行权）本身不带成交价，故无法算出金额。
+{% if deriv %}
+### 衍生品交易（期权 / 权证 / RSU）
+
+| 日期 | 内部人 | 职务 | 证券 | 方向 | 代码 | 数量 | 行权价 | 标的股数 | 交易后持有 |
+|------|--------|------|------|------|------|------|--------|----------|------------|
+{% for t in deriv %}
+| {{ t.transaction_date or "—" }} | {{ t.insider_name or "—" }} | {{ t.title or "—" }} | {{ t.security_title or "—" }} | {{ t.direction }} | {{ t.transaction_code or "—" }} | {{ t.shares | shares }} | {{ t.exercise_price | num if t.exercise_price is not none else "—" }} | {{ t.underlying_shares | shares }} | {{ t.shares_owned_after | shares }} |
+{% endfor %}
+{% endif %}
+
+> 交易代码：P=公开市场买入，S=公开市场卖出，A=授予/获得，M=期权行权，F=纳税扣股，G=赠与，X=权证行权。方向 A=增持、D=减持。
+> 增持金额常为「—」：M/A 这类授予或行权本身不带成交价，无法算出金额。
+> 衍生品与普通股不要相加：RSU 归属会在两张表各出现一次，是同一笔事件的两条腿。
 {% else %}
 _近期无 Form 4 内部人交易记录（或未采集到）。_
 {% endif %}

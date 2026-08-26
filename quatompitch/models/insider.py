@@ -22,6 +22,13 @@ class InsiderTrade(BaseModel):
     is_direct: Optional[bool] = None
     filing_url: Optional[str] = None
 
+    # 衍生品（期权/权证/RSU）交易。有些公司的内部人活动**全部**发生在衍生品表，
+    # 只读普通股表会整份漏掉（如 SHOP）。
+    is_derivative: bool = False
+    security_title: Optional[str] = None      # 如 "Warrants to Purchase..."
+    exercise_price: Optional[float] = None    # 行权价/转换价
+    underlying_shares: Optional[float] = None # 对应的标的股数
+
     @property
     def direction(self) -> str:
         """归一化方向标签。"""

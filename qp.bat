@@ -1,6 +1,10 @@
 @echo off
 setlocal
-set "PY=%~dp0.venv\Scripts\python.exe"
+set "QP_HOME=%~dp0"
+set "PY=%QP_HOME%.venv\Scripts\python.exe"
+rem Make the package importable no matter where the user runs this from:
+rem `python -m` only puts the CURRENT directory on sys.path, not this script's.
+set "PYTHONPATH=%QP_HOME%;%PYTHONPATH%"
 if not exist "%PY%" (
   echo [qp] venv not found: %PY%
   echo [qp] run: python -m venv .venv ^&^& .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -19,7 +23,7 @@ exit /b %errorlevel%
 "%PY%" -m quatompitch.cli %*
 exit /b %errorlevel%
 :test
-"%PY%" -m pytest tests/ -q
+"%PY%" -m pytest "%QP_HOME%tests" -q
 exit /b %errorlevel%
 :help
 "%PY%" -m quatompitch.cli --help
