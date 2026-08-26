@@ -1,12 +1,22 @@
 """命令行入口（typer）。"""
 from __future__ import annotations
 
+import sys
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from . import pipeline
 from .storage import repository as repo
+
+# Windows 中文环境（GBK 代码页）下，一旦 stdout/stderr 被重定向或管道接走，
+# 输出里的 ✓ 等字符会抛 UnicodeEncodeError，直接打断整个采集流程。统一切到 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # 非 TextIOWrapper（如测试替身）时跳过
+        pass
 
 app = typer.Typer(
     add_completion=False,

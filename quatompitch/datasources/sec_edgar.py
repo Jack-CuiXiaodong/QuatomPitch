@@ -220,9 +220,12 @@ class SecEdgarSource(DataSource):
         self, client: SecClient, cik_int: str, acc_nodash: str, pdoc: str
     ) -> Optional[str]:
         """定位 Form 4 的原始 XML 文档 URL。"""
-        # primaryDocument 若本身是 xml，直接用
+        # primaryDocument 若本身是 xml，直接用。
+        # 注意：SEC 给的路径常带 XSLT 渲染前缀（如 xslF345X06/form4.xml），
+        # 该地址返回的是渲染后的 HTML，解析必然失败，须剥掉前缀取原始 XML。
         if pdoc and pdoc.lower().endswith(".xml"):
-            return f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/{pdoc}"
+            name = pdoc.rsplit("/", 1)[-1] if pdoc.lower().startswith("xsl") else pdoc
+            return f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/{name}"
         # 否则读取该报送目录的 index.json，找非 xslt 的 xml 文件
         try:
             idx = client.get_json(

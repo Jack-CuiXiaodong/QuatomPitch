@@ -156,7 +156,7 @@ _无 SEC 报送记录。_
 
 {% if r.news %}
 {% for n in r.news %}
-- {% if n.url %}[{{ n.title }}]({{ n.url }}){% else %}{{ n.title }}{% endif %}{% if n.publisher %} — *{{ n.publisher }}*{% endif %}{% if n.published_at %} ({{ n.published_at }}){% endif %}
+- {% if n.url %}[{{ n.title }}]({{ n.url }}){% else %}{{ n.title }}{% endif %}{% if n.publisher %} — *{{ n.publisher }}*{% endif %}{% if n.published_at %} ({{ n.published_at }}){% endif +%}
 {% endfor %}
 {% else %}
 _无新闻数据。_
