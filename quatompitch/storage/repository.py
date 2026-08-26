@@ -26,7 +26,13 @@ from .schema import (
 
 
 def _upsert(session, model, values: dict, index_elements: list[str]):
-    """SQLite UPSERT：冲突则更新非主键字段。"""
+    """SQLite UPSERT：冲突则更新非主键字段。
+
+    领域模型的字段可能多于建表时的列（例如 FinancialPeriod 后来补了研发费、
+    分项现金流等），这里按实际列过滤，保证加字段不会写库失败。
+    """
+    cols = {c.name for c in model.__table__.columns}
+    values = {k: v for k, v in values.items() if k in cols}
     stmt = sqlite_insert(model).values(**values)
     update_cols = {
         c.name: stmt.excluded[c.name]

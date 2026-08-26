@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     http_timeout: float = 20.0
     sec_rate_limit_per_sec: float = 8.0  # SEC 上限约 10 req/s，留余量
 
+    # 报送正文抽取：单个章节保留的最大字符数（风险因素动辄十几万字）。
+    # 设为 0 表示不截断，整篇写进报告。
+    sec_section_max_chars: int = 40000
+
     @property
     def db_path(self) -> Path:
         p = Path(self.quatompitch_db_path)

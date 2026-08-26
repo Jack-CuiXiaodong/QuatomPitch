@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import threading
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
@@ -21,7 +22,13 @@ ARCHIVE_BASE = "https://www.sec.gov/Archives/edgar/data"
 # 关注的报送类型
 INDEX_FORMS = {"10-K", "10-Q", "8-K", "20-F", "40-F"}
 
+# 限速状态必须是**进程级**的：pipeline 会并发跑多个 SEC 数据源，
+# 每个实例各自限速的话叠加起来会突破 SEC 约 10 req/s 的上限而被封禁。
+_RATE_LOCK = threading.Lock()
+_LAST_REQUEST_AT = 0.0
+
 _TICKER_CACHE: dict[str, str] = {}
+_TICKER_CACHE_LOCK = threading.Lock()
 
 
 class SecClient:
@@ -37,13 +44,15 @@ class SecClient:
             follow_redirects=True,
         )
         self._min_interval = 1.0 / max(settings.sec_rate_limit_per_sec, 1.0)
-        self._last = 0.0
 
     def _throttle(self) -> None:
-        elapsed = time.monotonic() - self._last
-        if elapsed < self._min_interval:
-            time.sleep(self._min_interval - elapsed)
-        self._last = time.monotonic()
+        """全进程共享的令牌间隔，保证所有 SEC 数据源合计不超限。"""
+        global _LAST_REQUEST_AT
+        with _RATE_LOCK:
+            elapsed = time.monotonic() - _LAST_REQUEST_AT
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            _LAST_REQUEST_AT = time.monotonic()
 
     def get_json(self, url: str) -> Any:
         self._throttle()
@@ -62,13 +71,17 @@ class SecClient:
 
 
 def resolve_cik(client: SecClient, ticker: str) -> Optional[str]:
-    """ticker → 10 位零填充 CIK。"""
+    """ticker → 10 位零填充 CIK。
+
+    映射表约 1 MB，多个 SEC 数据源并发时用锁保证只拉一次。
+    """
     ticker = ticker.upper()
-    if not _TICKER_CACHE:
-        data = client.get_json(SEC_TICKERS_URL)
-        for row in data.values():
-            _TICKER_CACHE[str(row["ticker"]).upper()] = str(row["cik_str"])
-    cik = _TICKER_CACHE.get(ticker)
+    with _TICKER_CACHE_LOCK:
+        if not _TICKER_CACHE:
+            data = client.get_json(SEC_TICKERS_URL)
+            for row in data.values():
+                _TICKER_CACHE[str(row["ticker"]).upper()] = str(row["cik_str"])
+        cik = _TICKER_CACHE.get(ticker)
     return cik.zfill(10) if cik else None
 
 

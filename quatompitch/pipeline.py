@@ -8,7 +8,9 @@ from pathlib import Path
 from .analysis import compute_valuation
 from .datasources import (
     FredSource,
+    SecDocsSource,
     SecEdgarSource,
+    SecXbrlSource,
     YahooNewsSource,
     YFinanceSource,
 )
@@ -22,6 +24,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
+def _neg_date(d: str) -> str:
+    """把日期串取反用于「同一排序键里先升后降」：日期越新排越前。"""
+    return "".join(chr(255 - ord(c)) for c in (d or ""))
+
+
 def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     """对单只股票执行完整分析，返回 (报告对象, 输出文件路径)。"""
     ticker = ticker.strip().upper()
@@ -32,6 +39,8 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     sources = {
         "yfinance": YFinanceSource(),
         "sec": SecEdgarSource(),
+        "xbrl": SecXbrlSource(),
+        "docs": SecDocsSource(),
         "news": YahooNewsSource(),
         "fred": FredSource(),
     }
@@ -41,7 +50,7 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
             progress(msg)
 
     results: dict[str, dict] = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=len(sources)) as pool:
         futures = {pool.submit(src.fetch, ticker): name
                    for name, src in sources.items()}
         for fut in as_completed(futures):
@@ -71,6 +80,18 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     if report.company and sec.get("cik"):
         report.company.cik = sec["cik"]
 
+    xbrl = results.get("xbrl", {})
+    report.xbrl_annual = xbrl.get("xbrl_annual", []) or []
+    report.xbrl_quarterly = xbrl.get("xbrl_quarterly", []) or []
+    if xbrl.get("warning"):
+        report.warnings.append(xbrl["warning"])
+
+    docs = results.get("docs", {})
+    report.filing_documents = docs.get("filing_documents", []) or []
+    report.statement_tables = docs.get("statement_tables", []) or []
+    if docs.get("warning"):
+        report.warnings.append(docs["warning"])
+
     news = results.get("news", {})
     report.news = news.get("news", []) or []
 
@@ -90,6 +111,13 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     report.quarterly_financials = report.quarterly_financials[:8]
     report.insider_trades.sort(
         key=lambda t: t.transaction_date or "", reverse=True
+    )
+    report.xbrl_annual.sort(key=lambda p: p.fiscal_date, reverse=True)
+    report.xbrl_quarterly.sort(key=lambda p: p.fiscal_date, reverse=True)
+    # 正文按 10-K → 10-Q → 8-K 排，同类型内按报送日倒序
+    _form_rank = {"10-K": 0, "10-Q": 1, "8-K": 2}
+    report.filing_documents.sort(
+        key=lambda d: (_form_rank.get(d.form_type, 9), _neg_date(d.filing_date))
     )
 
     # --- 持久化 ---

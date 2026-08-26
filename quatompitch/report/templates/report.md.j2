@@ -1,15 +1,19 @@
 {% set c = r.company %}
 {% set q = r.quote %}
 {% set v = r.valuation %}
+{#- 章节号自增，避免每加一节就要手工重编号 -#}
+{% set CN = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五"] %}
+{% set sn = namespace(i=0) %}
 # {{ r.ticker }}{% if c and c.name %} · {{ c.name }}{% endif %} — 研究报告
 
 > 生成时间：{{ r.generated_at }}
-> 数据来源：SEC EDGAR · yfinance · FRED · Yahoo Finance News
+> 数据来源：SEC EDGAR（报送正文 / XBRL / Form 4）· yfinance · FRED · Yahoo Finance News
 > 本报告为结构化数据汇编，供 AI 大模型做进一步深度分析，不构成投资建议。
 
 ---
 
-## 一、公司概况
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、公司概况
 
 | 项目 | 内容 |
 |------|------|
@@ -29,7 +33,8 @@
 
 ---
 
-## 二、实时行情
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、实时行情
 
 | 指标 | 数值 |
 |------|------|
@@ -44,7 +49,8 @@
 
 ---
 
-## 三、估值指标
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、估值指标
 
 > 优先按财报自算，缺失项回退 yfinance 现成指标。仅作数据呈现，不做筛选判断。
 
@@ -59,7 +65,8 @@
 
 ---
 
-## 四、年度财务数据（利润表）
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、年度财务数据（yfinance）
 
 {% if r.annual_financials %}
 | 报告期 | 营收 | 毛利 | 营业利润 | EBITDA | 净利润 | 稀释EPS |
@@ -81,13 +88,22 @@ _无年度财务数据。_
 
 ---
 
-## 五、季度财务数据（近期）
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、季度财务数据（yfinance）
 
 {% if r.quarterly_financials %}
-| 报告期 | 营收 | 净利润 | 稀释EPS | 经营现金流 |
-|--------|------|--------|---------|------------|
+| 报告期 | 营收 | 毛利 | 营业利润 | EBITDA | 净利润 | 稀释EPS |
+|--------|------|------|----------|--------|--------|---------|
 {% for p in r.quarterly_financials %}
-| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} | {{ p.operating_cash_flow | money }} |
+| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.gross_profit | money }} | {{ p.operating_income | money }} | {{ p.ebitda | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} |
+{% endfor %}
+
+### 资产负债与现金流（季度）
+
+| 报告期 | 总资产 | 总负债 | 股东权益 | 总债务 | 现金 | 经营现金流 | 自由现金流 |
+|--------|--------|--------|----------|--------|------|------------|------------|
+{% for p in r.quarterly_financials %}
+| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.total_liabilities | money }} | {{ p.total_equity | money }} | {{ p.total_debt | money }} | {{ p.cash_and_equivalents | money }} | {{ p.operating_cash_flow | money }} | {{ p.free_cash_flow | money }} |
 {% endfor %}
 {% else %}
 _无季度财务数据。_
@@ -95,7 +111,84 @@ _无季度财务数据。_
 
 ---
 
-## 六、重大信息 · 内部人交易（高管/董事增减持，SEC Form 4）
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、SEC XBRL 官方财务数据
+
+> 直接取自公司报给 SEC 的 XBRL 事实，可溯源到具体报送。与上面 yfinance 的口径可交叉验证；
+> 若两者对不上，以本节为准。
+
+{% if r.xbrl_annual %}
+### 年度（来源：10-K）
+
+| 报告期 | 营收 | 营业成本 | 毛利 | 研发费 | 销管费 | 营业利润 | 税前利润 | 所得税 | 净利润 | 稀释EPS | 报送 |
+|--------|------|----------|------|--------|--------|----------|----------|--------|--------|---------|------|
+{% for p in r.xbrl_annual %}
+| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.sga_expense | money }} | {{ p.operating_income | money }} | {{ p.pretax_income | money }} | {{ p.income_tax_expense | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.accession_no or "—" }} |
+{% endfor %}
+
+| 报告期 | 总资产 | 流动资产 | 存货 | 应收账款 | 总负债 | 流动负债 | 股东权益 | 长期负债 | 现金及等价物 |
+|--------|--------|----------|------|----------|--------|----------|----------|----------|--------------|
+{% for p in r.xbrl_annual %}
+| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.current_assets | money }} | {{ p.inventory | money }} | {{ p.receivables | money }} | {{ p.total_liabilities | money }} | {{ p.current_liabilities | money }} | {{ p.total_equity | money }} | {{ p.long_term_debt | money }} | {{ p.cash_and_equivalents | money }} |
+{% endfor %}
+
+| 报告期 | 经营现金流 | 投资现金流 | 筹资现金流 | 资本开支 | 自由现金流 | 分红支出 | 股票回购 | 稀释加权股数 |
+|--------|------------|------------|------------|----------|------------|----------|----------|--------------|
+{% for p in r.xbrl_annual %}
+| {{ p.fiscal_date }} | {{ p.operating_cash_flow | money }} | {{ p.investing_cash_flow | money }} | {{ p.financing_cash_flow | money }} | {{ p.capital_expenditure | money }} | {{ p.free_cash_flow | money }} | {{ p.dividends_paid | money }} | {{ p.share_repurchase | money }} | {{ p.shares_diluted_wtd | shares }} |
+{% endfor %}
+{% endif %}
+
+{% if r.xbrl_quarterly %}
+### 季度（来源：10-Q）
+
+| 报告期 | 财季 | 营收 | 营业成本 | 毛利 | 研发费 | 营业利润 | 净利润 | 稀释EPS | 经营现金流 | 报送 |
+|--------|------|------|----------|------|--------|----------|--------|---------|------------|------|
+{% for p in r.xbrl_quarterly %}
+| {{ p.fiscal_date }} | {{ p.fiscal_period or "—" }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.operating_income | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.operating_cash_flow | money }} | {{ p.accession_no or "—" }} |
+{% endfor %}
+
+> 季度现金流常为空：多数公司在 10-Q 里按「年初至今」口径披露现金流，而非单季。
+> 为避免把累计数当单季数误读，这里只保留跨度确为一个季度的事实。
+{% endif %}
+
+{% if not r.xbrl_annual and not r.xbrl_quarterly %}
+_未取到 XBRL 财务数据。_
+{% endif %}
+
+---
+
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、分部 · 分产品 · 分地区收入
+
+> 来自最近一份 10-K 的附注明细表（SEC 渲染文件）。这些带维度的数据 XBRL
+> companyfacts 接口取不到，只能从报表附注抽取。金额单位见各表表头。
+
+{% if r.statement_tables %}
+{% for t in r.statement_tables %}
+#### {{ t.title }}
+
+{% if t.units %}单位：{{ t.units }}{% if t.period_label %} · {{ t.period_label }}{% endif %}
+{% elif t.period_label %}口径：{{ t.period_label }}
+{% endif %}
+
+| 项目 | {{ t.columns | join(" | ") }} |
+|{{ "---|" * t.width }}
+{% for row in t.rows %}
+| {{ row | join(" | ") }} |
+{% endfor %}
+
+来源：[{{ t.source_form }} {{ t.filing_date }}]({{ t.url }})
+
+{% endfor %}
+{% else %}
+_未取到分部收入表。_
+{% endif %}
+
+---
+
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、重大信息 · 内部人交易（高管/董事增减持，SEC Form 4）
 
 {% if r.insider_trades %}
 {% set ns = namespace(buy_shares=0.0, buy_value=0.0, sell_shares=0.0, sell_value=0.0, buys=0, sells=0) %}
@@ -111,7 +204,7 @@ _无季度财务数据。_
 {% endif %}
 {% endfor %}
 
-**汇总（近 {{ r.insider_trades | length }} 笔）**：增持 {{ ns.buys }} 笔 / {{ ns.buy_shares | shares }} 股 / {{ ns.buy_value | money }}；减持 {{ ns.sells }} 笔 / {{ ns.sell_shares | shares }} 股 / {{ ns.sell_value | money }}。
+**汇总（近 {{ r.insider_trades | length }} 笔）**：增持 {{ ns.buys }} 笔 / {{ ns.buy_shares | shares }} 股 / {{ ns.buy_value | money if ns.buy_value else "—" }}；减持 {{ ns.sells }} 笔 / {{ ns.sell_shares | shares }} 股 / {{ ns.sell_value | money if ns.sell_value else "—" }}。
 
 | 日期 | 内部人 | 职务 | 方向 | 代码 | 股数 | 价格 | 金额 | 交易后持股 |
 |------|--------|------|------|------|------|------|------|------------|
@@ -120,13 +213,15 @@ _无季度财务数据。_
 {% endfor %}
 
 > 交易代码说明：P=公开市场买入，S=公开市场卖出，A=授予/获得，M=期权行权，F=纳税扣股，G=赠与。方向 A=增持、D=减持。
+> 增持金额常为「—」：M（期权行权）本身不带成交价，故无法算出金额。
 {% else %}
 _近期无 Form 4 内部人交易记录（或未采集到）。_
 {% endif %}
 
 ---
 
-## 七、SEC 报送索引（10-K / 10-Q / 8-K）
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、SEC 报送索引（10-K / 10-Q / 8-K）
 
 {% if r.filings %}
 | 日期 | 类型 | 报告期 | 说明 | 链接 |
@@ -140,8 +235,38 @@ _无 SEC 报送记录。_
 
 ---
 
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、报送正文摘录（10-K / 10-Q / 8-K）
+
+> 上一节只有链接，大模型打不开。这里是从报送原文抽出的正文，按章节切分。
+> 超长章节（如风险因素）会截断，截断处有标注。
+
+{% if r.filing_documents %}
+{% for d in r.filing_documents %}
+### {{ d.form_type }} · 报送日 {{ d.filing_date }}{% if d.report_date %} · 报告期 {{ d.report_date }}{% endif %}
+
+{% if d.url %}
+原文：[{{ d.accession_no or d.form_type }}]({{ d.url }})
+{% endif %}
+
+{% for s in d.sections %}
+#### {% if s.item %}Item {{ s.item }} · {% endif %}{{ s.title }}{% if s.truncated %}（已截断，原文更长）{% endif %}
+
+```text
+{{ s.text }}
+```
+
+{% endfor %}
+{% endfor %}
+{% else %}
+_未取到报送正文。_
+{% endif %}
+
+---
+
 {% if r.macro %}
-## 八、宏观环境（FRED）
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、宏观环境（FRED）
 
 | 指标 | 最新值 | 单位 | 日期 |
 |------|--------|------|------|
@@ -152,11 +277,15 @@ _无 SEC 报送记录。_
 ---
 {% endif %}
 
-## {% if r.macro %}九{% else %}八{% endif %}、市场舆情（Yahoo Finance News）
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、市场舆情（Yahoo Finance News）
 
 {% if r.news %}
 {% for n in r.news %}
 - {% if n.url %}[{{ n.title }}]({{ n.url }}){% else %}{{ n.title }}{% endif %}{% if n.publisher %} — *{{ n.publisher }}*{% endif %}{% if n.published_at %} ({{ n.published_at }}){% endif +%}
+{% if n.summary %}
+  {{ n.summary }}
+{% endif %}
 {% endfor %}
 {% else %}
 _无新闻数据。_
@@ -166,7 +295,9 @@ _无新闻数据。_
 
 ## 附：数据来源与免责声明
 
-- **SEC EDGAR**：10-K/10-Q/8-K 报送、Form 4 内部人交易（官方数据）。
+- **SEC EDGAR**：10-K/10-Q/8-K 报送索引与**正文摘录**、Form 4 内部人交易（官方数据）。
+- **SEC XBRL companyfacts**：官方结构化财务数据，可溯源到具体报送。
+- **SEC 报表附注（R 文件）**：分部 / 分产品 / 分地区收入。
 - **yfinance**：实时行情、市值、三大报表（Yahoo Finance 非官方接口）。
 - **FRED**：宏观经济指标（需 API key）。
 - **Yahoo Finance News**：市场舆情。

@@ -1,4 +1,5 @@
 from .company import Company, Quote
+from .documents import FilingDocument, FilingSection, StatementTable
 from .financials import FinancialPeriod, Valuation
 from .insider import Filing, InsiderTrade, MacroIndicator, NewsItem
 from .report import ResearchReport
@@ -12,5 +13,8 @@ __all__ = [
     "InsiderTrade",
     "MacroIndicator",
     "NewsItem",
+    "FilingSection",
+    "FilingDocument",
+    "StatementTable",
     "ResearchReport",
 ]

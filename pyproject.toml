@@ -17,7 +17,12 @@ dependencies = [
     "pydantic>=2.5",
     "pydantic-settings>=2.2",
     "python-dotenv>=1.0",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
 
 [project.scripts]
 quatompitch = "quatompitch.cli:app"

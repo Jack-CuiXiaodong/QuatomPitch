@@ -34,7 +34,7 @@ QuatomPitch 是一套**美股辅助交易系统**。命令行输入股票代码�
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip install pytest    # 测试用，不在 requirements.txt 里
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt   # 测试用
 copy .env.example .env    # 然后填 SEC_USER_AGENT
 ```
 
@@ -58,6 +58,9 @@ quatompitch/
 │   ├── base.py             抽象基类 DataSource.fetch(ticker) -> dict
 │   ├── yfinance_source.py  行情、公司信息、三大报表
 │   ├── sec_edgar.py        CIK 映射、10-K/10-Q/8-K 索引、Form 4 内部人交易
+│   │                       （SecClient 在此定义：User-Agent + 全局限速）
+│   ├── sec_xbrl.py         XBRL companyfacts：官方结构化财务，可溯源到报送
+│   ├── sec_docs.py         报送正文抽取（业务/风险/MD&A/8-K+EX-99）与分部收入表
 │   ├── fred_source.py      宏观指标（可选）
 │   └── yahoo_news.py       舆情，yfinance.news + RSS 兜底
 ├── models/             pydantic 领域模型（Company/Quote/FinancialPeriod/InsiderTrade/…）
@@ -75,10 +78,12 @@ quatompitch/
 
 1. **三层解耦**：数据源 / 指标计算 / 报告模板互不依赖。新增数据源只需实现 `DataSource.fetch()` 并在 `pipeline.py` 的 `sources` 字典注册，不改其它模块。
 2. **单源失败不影响整体**：`pipeline.analyze()` 用线程池并发采集，任一数据源抛异常都被捕获、记入 `report.warnings`，报告照常生成。修改时保持这个容错性。
-3. **SEC 限速与 User-Agent**：`SecClient` 内置节流（默认 8 req/s，SEC 上限约 10）和 User-Agent 头。**不要绕过**，否则会被 SEC 封。
+3. **SEC 限速与 User-Agent**：`SecClient` 内置节流（默认 8 req/s，SEC 上限约 10）和 User-Agent 头。**不要绕过**，否则会被 SEC 封。限速状态是**模块级全局**（`_RATE_LOCK` + `_LAST_REQUEST_AT`），因为 pipeline 会并发跑 sec / xbrl / docs 三个 SEC 数据源——若各自计时会叠加到 24 req/s 直接超限。新增 SEC 数据源必须复用 `SecClient`，不要自己发请求。
 4. **估值指标回退策略**：`compute_valuation()` 优先用财报自算（ROE、EV/EBITDA、P/S、P/B），拿不到则回退 yfinance 的现成字段。
 5. **数据库 UPSERT**：`repository.py` 用 SQLite `ON CONFLICT DO UPDATE`，重复分析同一股票不会产生脏数据。
 6. **报告模板里的空值**：所有 Jinja2 filter 对 `None` 都渲染成 `—`，不要让模板抛异常。
+7. **MD 是给大模型吃的，不是给人读的**：用户拿到 MD 直接投喂大模型做对话式分析。所以宁可长、不可缺——报送正文要带原文（大模型打不开链接），表格每行要能独立读懂（分组名拍进行标签，而不是单独占一行）。报告体量目前 40K～95K token 属正常。
+8. **章节号自增**：模板顶部用 `CN` + `namespace(i=0)` 计数，加一节不必手工重编号（宏观模块是可选章节，硬编号必错）。
 
 ## 当前状态与已知问题
 
@@ -87,7 +92,9 @@ quatompitch/
   - **stdout 被管道/重定向时整个流程中断**：中文 Windows 是 GBK 代码页，进度输出里的 `✓` 抛 UnicodeEncodeError，崩溃点在采集途中，报告根本写不出来。已在 CLI 启动时把 stdout/stderr 切到 UTF-8。
   - **新闻 10 条挤成 1 行**：`trim_blocks=True` 会吃掉块标签后的换行，而新闻那行以 `{% endif %}` 结尾。已改用 `{% endif +%}`。
 - 运行环境：Python 3.12.10 + `.venv`。实测 pandas 3.0.5 / yfinance 1.6.0 / numpy 2.5.2 下 yfinance 字段映射正常，`_row()` 候选行名无需改动。
-- `pytest` 不在 `requirements.txt` 里，需单独装（`qp test` 会用到）。
+- 2026-08-26 补齐了「大模型原料」缺口：此前报告只有 5K token，10-K/10-Q 只给链接不给正文、无分部收入、季度财报只有 4 个字段。现已加 `sec_xbrl.py`（官方 XBRL 财务，6 年年度 + 10 季度全字段）、`sec_docs.py`（报送正文 + 分部/分产品/分地区收入表），并展开季度表、渲染新闻摘要。AAPL/MSFT/NVDA 实测 43K～94K token。
+- `pytest` 在 `requirements-dev.txt` 里，需单独装（`qp test` 会用到）。
+- 报送正文单章节默认截断在 40,000 字符（`sec_section_max_chars`，设 0 则不截断）。风险因素动辄十几万字，不截会把报告撑爆。
 - 已知数据口径问题（暂未处理，非 bug）：
   - 年度财报最老一期常常整行为空 —— yfinance 一般只给 4 个完整财年，模板按约定渲染成 `—`。
   - 内部人「增持」汇总金额常显示 `$0.00` —— 增持多为 M 代码（期权行权），本身不带成交价。

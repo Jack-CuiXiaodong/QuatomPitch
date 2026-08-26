@@ -47,8 +47,15 @@ def analyze(
         t.add_row("P/E (TTM)", str(report.valuation.pe_trailing))
         t.add_row("ROE", f"{report.valuation.roe:.2f}%" if report.valuation.roe else "—")
     t.add_row("年度财报期数", str(len(report.annual_financials)))
+    t.add_row("XBRL 年度/季度", f"{len(report.xbrl_annual)} / {len(report.xbrl_quarterly)}")
+    t.add_row("分部收入表", str(len(report.statement_tables)))
     t.add_row("内部人交易笔数", str(len(report.insider_trades)))
     t.add_row("SEC 报送", str(len(report.filings)))
+    doc_chars = sum(d.total_chars for d in report.filing_documents)
+    t.add_row(
+        "报送正文",
+        f"{len(report.filing_documents)} 份 / {doc_chars:,} 字符",
+    )
     t.add_row("新闻", str(len(report.news)))
     console.print(t)
 
