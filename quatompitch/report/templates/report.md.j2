@@ -137,11 +137,15 @@ _无季度财务数据。_
 {% if r.xbrl_annual %}
 ### 年度（来源：10-K）
 
-| 报告期 | 营收 | 营业成本 | 毛利 | 研发费 | 销管费 | 营业利润 | 税前利润 | 所得税 | 净利润 | 稀释EPS | 报送 |
-|--------|------|----------|------|--------|--------|----------|----------|--------|--------|---------|------|
+| 报告期 | 营收 | 营业成本 | 毛利 | 研发费 | 销管费(合并) | 销售营销费 | 管理费用 | 营业利润 | 税前利润 | 所得税 | 净利润 | 稀释EPS | 报送 |
+|--------|------|----------|------|--------|--------------|------------|----------|----------|----------|--------|--------|---------|------|
 {% for p in r.xbrl_annual %}
-| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.sga_expense | money }} | {{ p.operating_income | money }} | {{ p.pretax_income | money }} | {{ p.income_tax_expense | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.accession_no or "—" }} |
+| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.sga_expense | money }} | {{ p.selling_marketing_expense | money }} | {{ p.general_admin_expense | money }} | {{ p.operating_income | money }} | {{ p.pretax_income | money }} | {{ p.income_tax_expense | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.accession_no or "—" }} |
 {% endfor %}
+
+> 销管费用有两种申报方式：合并报 SG&A（如 Apple），或拆成销售营销费 + 管理费用
+> 两行（如 Adobe）。两种口径互斥，哪种为空说明该公司没用那个科目，**不要把
+> 「销管费(合并)」的空值当成公司没有这项支出**，看右边两列。
 
 | 报告期 | 总资产 | 流动资产 | 存货 | 应收账款 | 总负债 | 流动负债 | 递延收入/合同负债 | 股东权益 | 长期负债 | 现金及等价物 |
 |--------|--------|----------|------|----------|--------|----------|-------------------|----------|----------|--------------|
@@ -162,10 +166,10 @@ _无季度财务数据。_
 {% if r.xbrl_quarterly %}
 ### 季度（来源：10-Q）
 
-| 报告期 | 财季 | 营收 | 营业成本 | 毛利 | 研发费 | 营业利润 | 净利润 | 稀释EPS | 经营现金流 | 报送 |
-|--------|------|------|----------|------|--------|----------|--------|---------|------------|------|
+| 报告期 | 财季 | 营收 | 营业成本 | 毛利 | 研发费 | 销售营销费 | 营业利润 | 净利润 | 稀释EPS | 经营现金流 | 报送 |
+|--------|------|------|----------|------|--------|------------|----------|--------|---------|------------|------|
 {% for p in r.xbrl_quarterly %}
-| {{ p.fiscal_date }} | {{ p.fiscal_period or "—" }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.operating_income | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.operating_cash_flow | money }} | {{ p.accession_no or "—" }} |
+| {{ p.fiscal_date }} | {{ p.fiscal_period or "—" }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.selling_marketing_expense | money }} | {{ p.operating_income | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.operating_cash_flow | money }} | {{ p.accession_no or "—" }} |
 {% endfor %}
 
 > 季度现金流常为空：多数公司在 10-Q 里按「年初至今」口径披露现金流，而非单季。

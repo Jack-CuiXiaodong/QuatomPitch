@@ -18,7 +18,9 @@ class FinancialPeriod(BaseModel):
     cost_of_revenue: Optional[float] = None
     gross_profit: Optional[float] = None
     rnd_expense: Optional[float] = None
-    sga_expense: Optional[float] = None
+    sga_expense: Optional[float] = None              # 合并申报的 SG&A
+    selling_marketing_expense: Optional[float] = None  # 拆开申报时的销售营销费
+    general_admin_expense: Optional[float] = None      # 拆开申报时的管理费用
     operating_expenses: Optional[float] = None
     operating_income: Optional[float] = None
     ebitda: Optional[float] = None

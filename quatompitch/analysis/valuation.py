@@ -16,13 +16,31 @@ def _safe_div(a: Optional[float], b: Optional[float]) -> Optional[float]:
     return a / b
 
 
+def _has_substance(p: FinancialPeriod) -> bool:
+    """这一期是否真有数据。yfinance 有时给出报告期列却全是空值。"""
+    return any(
+        getattr(p, f) is not None
+        for f in ("revenue", "net_income", "total_equity", "total_assets")
+    )
+
+
 def compute_valuation(
     ticker: str,
     quote: Optional[Quote],
     annual: list[FinancialPeriod],
     info_metrics: dict | None = None,
+    xbrl_annual: list[FinancialPeriod] | None = None,
 ) -> Valuation:
+    """计算估值指标。
+
+    yfinance 是抓取式非官方接口，偶发整片返回空值。这种情况下若只认它，
+    估值表会整列变「—」，而 SEC XBRL 里同样的科目其实一应俱全。
+    因此财报口径按 yfinance → XBRL 的顺序取，谁有数据用谁。
+    """
     info_metrics = info_metrics or {}
+    annual = [p for p in (annual or []) if _has_substance(p)]
+    if not annual and xbrl_annual:
+        annual = [p for p in xbrl_annual if _has_substance(p)]
     latest: Optional[FinancialPeriod] = annual[0] if annual else None
 
     price = quote.price if quote else None

@@ -28,11 +28,19 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
     ),
     "cost_of_revenue": ("CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfSales"),
     "gross_profit": ("GrossProfit",),
-    "rnd_expense": ("ResearchAndDevelopmentExpense",),
-    "sga_expense": (
-        "SellingGeneralAndAdministrativeExpense",
-        "GeneralAndAdministrativeExpense",
+    "rnd_expense": (
+        "ResearchAndDevelopmentExpense",
+        # 软件公司常用这个更长的标签（Adobe 即是），漏了会让研发费整列为空
+        "ResearchAndDevelopmentExpenseSoftwareExcludingAcquiredInProcessCost",
+        "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
     ),
+    # 销管费用：有的公司合并报 SG&A，有的拆成销售营销 + 管理费用两行。
+    # 千万不要让合并口径「回退」到只含管理费用的标签——那不是缺值，是一个看起来
+    # 正常的错数（Adobe 的 G&A 只有 15.7 亿，而销售营销另有 64.9 亿）。
+    # 三个字段各取各的标签，谁没有就空着，由下游自行相加。
+    "sga_expense": ("SellingGeneralAndAdministrativeExpense",),
+    "selling_marketing_expense": ("SellingAndMarketingExpense", "SellingExpense"),
+    "general_admin_expense": ("GeneralAndAdministrativeExpense",),
     "operating_expenses": ("OperatingExpenses", "CostsAndExpenses"),
     "operating_income": ("OperatingIncomeLoss",),
     "pretax_income": (

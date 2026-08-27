@@ -24,6 +24,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
+def _drop_empty(periods: list) -> list:
+    """丢掉整行没有实质数据的报告期（yfinance 常给出空列）。"""
+    keys = ("revenue", "net_income", "total_equity", "total_assets",
+            "operating_cash_flow")
+    return [p for p in periods
+            if any(getattr(p, k, None) is not None for k in keys)]
+
+
 def _neg_date(d: str) -> str:
     """把日期串取反用于「同一排序键里先升后降」：日期越新排越前。"""
     return "".join(chr(255 - ord(c)) for c in (d or ""))
@@ -100,12 +108,12 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     if fred.get("skipped"):
         report.warnings.append(fred["skipped"])
 
-    # --- 估值指标 ---
-    report.valuation = compute_valuation(
-        ticker, report.quote, report.annual_financials, info_metrics
-    )
+    # --- 清洗与排序（必须在算估值之前：估值取 [0] 当最近一期）---
+    # yfinance 偶尔会给出报告期却整行没有数值，留着只会在报告里渲染成一排「—」，
+    # 既占地方又让人以为公司没披露。
+    report.annual_financials = _drop_empty(report.annual_financials)
+    report.quarterly_financials = _drop_empty(report.quarterly_financials)
 
-    # --- 排序：财报按报告期倒序，内部人交易按日期倒序 ---
     report.annual_financials.sort(key=lambda p: p.fiscal_date, reverse=True)
     report.quarterly_financials.sort(key=lambda p: p.fiscal_date, reverse=True)
     report.quarterly_financials = report.quarterly_financials[:8]
@@ -114,6 +122,18 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     )
     report.xbrl_annual.sort(key=lambda p: p.fiscal_date, reverse=True)
     report.xbrl_quarterly.sort(key=lambda p: p.fiscal_date, reverse=True)
+
+    # --- 估值指标 ---
+    # 把 XBRL 一并传进去：yfinance 整片失败时，估值仍能用 SEC 官方数据算出来，
+    # 不至于整张表变「—」。
+    report.valuation = compute_valuation(
+        ticker, report.quote, report.annual_financials, info_metrics,
+        xbrl_annual=report.xbrl_annual,
+    )
+    if not report.annual_financials and report.xbrl_annual:
+        report.warnings.append(
+            "yfinance 未返回年度财报，估值指标已改用 SEC XBRL 数据计算"
+        )
     # 正文按 10-K → 10-Q → 8-K 排，同类型内按报送日倒序
     _form_rank = {"10-K": 0, "10-Q": 1, "8-K": 2}
     report.filing_documents.sort(
