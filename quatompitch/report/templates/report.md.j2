@@ -10,6 +10,17 @@
 > 数据来源：SEC EDGAR（报送正文 / XBRL / Form 4）· yfinance · FRED · Yahoo Finance News
 > 本报告为结构化数据汇编，供 AI 大模型做进一步深度分析，不构成投资建议。
 
+{% set blocking = r.blocking_warnings %}
+{% if blocking %}
+> [!] **本次采集存在异常，阅读下列数据前请先看这里：**
+{% for w in blocking %}
+> - {{ w }}
+{% endfor %}
+>
+> 采集数据源之间互相独立，单个失败不影响其它章节，但**受影响的章节会缺数据或整节为空**。
+> 若本报告明显比同类公司单薄，多为采集时的网络偶发失败，重新生成一次即可。
+{% endif %}
+
 ---
 
 {% set sn.i = sn.i + 1 %}
@@ -168,6 +179,42 @@ _未取到三大报表原文。_
 
 {% if not r.xbrl_annual and not r.xbrl_quarterly %}
 _未取到 XBRL 财务数据。_
+{% endif %}
+
+---
+
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、数据自洽性校验
+
+> 会计恒等式是确定性的：毛利必须等于营收减营业成本，总资产必须等于负债加权益。
+> 这里把它们当场核一遍，**目的是让采集环节的映射错误自己暴露**——缺一格数据是
+> 「—」，一眼可见；而一个取错标签的值会输出成量级合理的数字，不核对根本发现不了。
+>
+> 「差异」不等于公司数据有问题，更可能是本工具的科目归类不全。看到差异请以本报告
+> 「三大报表原文」一节的申报原文为准。
+
+{% if r.consistency %}
+{% set failed = r.consistency | selectattr("failed") | list %}
+{% if failed %}
+**发现 {{ failed | length }} 处差异**，逐条列在下表 `差异` 行。
+{% else %}
+**全部通过**：{{ r.consistency | length }} 项校验均在容差内。
+{% endif %}
+
+| 校验项 | 报告期 | 范围 | 推算值 | 申报值 | 差额 | 占营收 | 结论 |
+|--------|--------|------|--------|--------|------|--------|------|
+{% for c in r.consistency %}
+| {{ c.name | cell }} | {{ c.period }} | {{ c.scope }} | {{ c.expected | money }} | {{ c.actual | money }} | {{ c.diff | money }} | {{ c.diff_pct | pct if c.diff_pct is not none else "—" }} | {{ c.status }} |
+{% endfor %}
+
+{% if failed %}
+差异明细：
+{% for c in failed %}
+- **{{ c.name | cell }}**（{{ c.period }}）：差额 {{ c.diff | money }}，占营收 {{ c.diff_pct | pct }}。{{ c.note or "" }}
+{% endfor %}
+{% endif %}
+{% else %}
+_无可校验的数据（需要 SEC XBRL 年度财务数据）。_
 {% endif %}
 
 ---

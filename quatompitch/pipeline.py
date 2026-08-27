@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .analysis import compute_valuation
+from .analysis import compute_valuation, run_checks
 from .datasources import (
     FredSource,
     SecDocsSource,
@@ -134,6 +134,18 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     if not report.annual_financials and report.xbrl_annual:
         report.warnings.append(
             "yfinance 未返回年度财报，估值指标已改用 SEC XBRL 数据计算"
+        )
+
+    # --- 自洽性校验 ---
+    # 错数比缺数危险：缺一格是「—」一眼可见，映射错误却会输出一个量级合理的数字。
+    # 会计恒等式当场核一遍，对不上的写进告警，让问题自己暴露而不是留给下游发现。
+    report.consistency = run_checks(report.xbrl_annual, report.annual_financials)
+    failed = [c for c in report.consistency if c.failed]
+    if failed:
+        names = sorted({c.name.split("：")[0].split(" = ")[0] for c in failed})
+        report.warnings.append(
+            f"自洽性校验发现 {len(failed)} 处差异（{'、'.join(names)}），"
+            f"详见报告「数据自洽性校验」一节"
         )
     # 正文按 10-K → 10-Q → 8-K 排，同类型内按报送日倒序
     _form_rank = {"10-K": 0, "10-Q": 1, "8-K": 2}

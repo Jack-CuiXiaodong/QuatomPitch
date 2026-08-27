@@ -9,6 +9,7 @@ from .company import Company, Quote
 from .financials import FinancialPeriod, Valuation
 from .documents import FilingDocument, StatementTable
 from .insider import Filing, InsiderTrade, MacroIndicator, NewsItem
+from .quality import ConsistencyCheck
 
 
 class ResearchReport(BaseModel):
@@ -39,5 +40,17 @@ class ResearchReport(BaseModel):
     news: List[NewsItem] = Field(default_factory=list)
     macro: List[MacroIndicator] = Field(default_factory=list)
 
+    # 会计恒等式与跨源一致性校验结果
+    consistency: List[ConsistencyCheck] = Field(default_factory=list)
+
     # 采集过程中的告警（某数据源失败时记录，写入报告脚注）
     warnings: List[str] = Field(default_factory=list)
+
+    @property
+    def blocking_warnings(self) -> List[str]:
+        """真正影响数据完整性的告警。
+
+        「未配置 FRED_API_KEY」是配置提示不是故障，几乎每次都会出现，
+        混在一起会让顶部警示天天亮着，久而久之就没人看了。
+        """
+        return [w for w in self.warnings if "FRED" not in w]
