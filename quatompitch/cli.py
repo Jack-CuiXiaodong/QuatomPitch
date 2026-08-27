@@ -48,6 +48,7 @@ def analyze(
         t.add_row("ROE", f"{report.valuation.roe:.2f}%" if report.valuation.roe else "—")
     t.add_row("年度财报期数", str(len(report.annual_financials)))
     t.add_row("XBRL 年度/季度", f"{len(report.xbrl_annual)} / {len(report.xbrl_quarterly)}")
+    t.add_row("三大报表原文", str(len(report.primary_statements)))
     t.add_row("分部收入表", str(len(report.statement_tables)))
     t.add_row("内部人交易笔数", str(len(report.insider_trades)))
     t.add_row("SEC 报送", str(len(report.filings)))

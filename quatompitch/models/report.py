@@ -29,8 +29,11 @@ class ResearchReport(BaseModel):
     insider_trades: List[InsiderTrade] = Field(default_factory=list)
     filings: List[Filing] = Field(default_factory=list)
 
-    # 报送正文抽取（10-K / 10-Q / 8-K）与财报附注表（分部、分产品收入）
+    # 报送正文抽取（10-K / 10-Q / 8-K）
     filing_documents: List[FilingDocument] = Field(default_factory=list)
+    # 三大报表原文（as-filed，含公司自定义标签的行）
+    primary_statements: List[StatementTable] = Field(default_factory=list)
+    # 财报附注表（分部、分产品、分地区收入）
     statement_tables: List[StatementTable] = Field(default_factory=list)
 
     news: List[NewsItem] = Field(default_factory=list)

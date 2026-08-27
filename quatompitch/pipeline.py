@@ -96,6 +96,7 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
 
     docs = results.get("docs", {})
     report.filing_documents = docs.get("filing_documents", []) or []
+    report.primary_statements = docs.get("primary_statements", []) or []
     report.statement_tables = docs.get("statement_tables", []) or []
     if docs.get("warning"):
         report.warnings.append(docs["warning"])

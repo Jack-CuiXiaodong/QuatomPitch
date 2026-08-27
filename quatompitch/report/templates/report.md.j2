@@ -78,56 +78,46 @@
 ---
 
 {% set sn.i = sn.i + 1 %}
-## {{ CN[sn.i] }}、年度财务数据（yfinance）
+## {{ CN[sn.i] }}、三大报表原文（as-filed，SEC 渲染）
 
-{% if r.annual_financials %}
-| 报告期 | 营收 | 毛利 | 营业利润 | EBITDA | 净利润 | 稀释EPS |
-|--------|------|------|----------|--------|--------|---------|
-{% for p in r.annual_financials %}
-| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.gross_profit | money }} | {{ p.operating_income | money }} | {{ p.ebitda | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} |
+> **本节是财务数据的第一来源。** 直接来自报送里 SEC 渲染出的报表，行标签是公司
+> 自己写的，科目一行不少——**包括挂在公司自定义扩展标签下的行**（例如「资本化
+> 软件支出」这类，XBRL companyfacts 接口只暴露 us-gaap 标准标签，那里根本取不到）。
+>
+> 代价是行标签各家不同、无法直接跨公司比较；需要归一化口径请看下一节的 XBRL。
+> 两者对不上时，**以本节为准**——它就是报表原文。
+
+{% if r.primary_statements %}
+{% for t in r.primary_statements %}
+### {{ t.title }}
+
+来源：{{ t.source_form }} · 报送日 {{ t.filing_date }}{% if t.units %} · 单位 {{ t.units }}{% endif %}{% if t.period_label %} · {{ t.period_label }}{% endif %}
+
+| 项目 | {{ t.columns | map("cell") | join(" | ") }} |
+|{{ "---|" * t.width }}
+{% for row in t.rows %}
+| {{ row | map("cell") | join(" | ") }} |
 {% endfor %}
 
-### 资产负债与现金流（年度）
+原文：[{{ t.title }}]({{ t.url }})
 
-| 报告期 | 总资产 | 总负债 | 股东权益 | 总债务 | 现金 | 经营现金流 | 自由现金流 |
-|--------|--------|--------|----------|--------|------|------------|------------|
-{% for p in r.annual_financials %}
-| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.total_liabilities | money }} | {{ p.total_equity | money }} | {{ p.total_debt | money }} | {{ p.cash_and_equivalents | money }} | {{ p.operating_cash_flow | money }} | {{ p.free_cash_flow | money }} |
 {% endfor %}
+
+> 行标签里的 `·` 前半段是该行在报表中所属的段落（如「Cash flows from operating
+> activities:」），照报送渲染顺序归属。小计/合计行可能落在最后一个子段落名下，
+> 读数时以 `·` 后面的科目名为准。
 {% else %}
-_无年度财务数据。_
+_未取到三大报表原文。_
 {% endif %}
 
 ---
 
 {% set sn.i = sn.i + 1 %}
-## {{ CN[sn.i] }}、季度财务数据（yfinance）
+## {{ CN[sn.i] }}、SEC XBRL 官方财务数据（归一化）
 
-{% if r.quarterly_financials %}
-| 报告期 | 营收 | 毛利 | 营业利润 | EBITDA | 净利润 | 稀释EPS |
-|--------|------|------|----------|--------|--------|---------|
-{% for p in r.quarterly_financials %}
-| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.gross_profit | money }} | {{ p.operating_income | money }} | {{ p.ebitda | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} |
-{% endfor %}
-
-### 资产负债与现金流（季度）
-
-| 报告期 | 总资产 | 总负债 | 股东权益 | 总债务 | 现金 | 经营现金流 | 自由现金流 |
-|--------|--------|--------|----------|--------|------|------------|------------|
-{% for p in r.quarterly_financials %}
-| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.total_liabilities | money }} | {{ p.total_equity | money }} | {{ p.total_debt | money }} | {{ p.cash_and_equivalents | money }} | {{ p.operating_cash_flow | money }} | {{ p.free_cash_flow | money }} |
-{% endfor %}
-{% else %}
-_无季度财务数据。_
-{% endif %}
-
----
-
-{% set sn.i = sn.i + 1 %}
-## {{ CN[sn.i] }}、SEC XBRL 官方财务数据
-
-> **原始申报科目**直接取自公司报给 SEC 的 XBRL 事实，可溯源到具体报送，与 yfinance
-> 对不上时以本节为准。
+> 与上一节同源（都来自公司报给 SEC 的 XBRL 事实），区别在于这里把各家不同的
+> 标签**归一化成统一字段**，因此可以跨公司、跨年份比较，也能溯源到具体报送。
+> 代价是只覆盖 us-gaap 标准标签：公司自定义扩展标签取不到，那些科目请看上一节原文。
 >
 > 但**自由现金流是本工具自算的派生值**（公式见列名），不是公司申报的科目：各家对
 > 资本开支的口径不同，且不少公司把资本化软件等支出挂在自定义扩展标签下，
@@ -207,6 +197,51 @@ _未取到 XBRL 财务数据。_
 {% endfor %}
 {% else %}
 _未取到分部收入表。_
+{% endif %}
+
+---
+
+{% set sn.i = sn.i + 1 %}
+## {{ CN[sn.i] }}、yfinance 财务数据（第三方，仅供交叉验证）
+
+> 来自 Yahoo Finance 的非官方抓取接口，**权威性低于前面三节**，放在这里是为了
+> 和 SEC 数据交叉验证。口径与 SEC 不一致时以 SEC 为准。该接口偶发整片返回空，
+> 若下表为空而前面几节有数据，属正常现象。
+
+{% if r.annual_financials %}
+### 年度
+
+| 报告期 | 营收 | 毛利 | 营业利润 | EBITDA | 净利润 | 稀释EPS |
+|--------|------|------|----------|--------|--------|---------|
+{% for p in r.annual_financials %}
+| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.gross_profit | money }} | {{ p.operating_income | money }} | {{ p.ebitda | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} |
+{% endfor %}
+
+| 报告期 | 总资产 | 总负债 | 股东权益 | 总债务 | 现金 | 经营现金流 | 自由现金流 |
+|--------|--------|--------|----------|--------|------|------------|------------|
+{% for p in r.annual_financials %}
+| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.total_liabilities | money }} | {{ p.total_equity | money }} | {{ p.total_debt | money }} | {{ p.cash_and_equivalents | money }} | {{ p.operating_cash_flow | money }} | {{ p.free_cash_flow | money }} |
+{% endfor %}
+{% else %}
+_无年度财务数据（yfinance 未返回）。_
+{% endif %}
+
+{% if r.quarterly_financials %}
+### 季度
+
+| 报告期 | 营收 | 毛利 | 营业利润 | EBITDA | 净利润 | 稀释EPS |
+|--------|------|------|----------|--------|--------|---------|
+{% for p in r.quarterly_financials %}
+| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.gross_profit | money }} | {{ p.operating_income | money }} | {{ p.ebitda | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num if p.eps_diluted else (p.eps_basic | num) }} |
+{% endfor %}
+
+| 报告期 | 总资产 | 总负债 | 股东权益 | 总债务 | 现金 | 经营现金流 | 自由现金流 |
+|--------|--------|--------|----------|--------|------|------------|------------|
+{% for p in r.quarterly_financials %}
+| {{ p.fiscal_date }} | {{ p.total_assets | money }} | {{ p.total_liabilities | money }} | {{ p.total_equity | money }} | {{ p.total_debt | money }} | {{ p.cash_and_equivalents | money }} | {{ p.operating_cash_flow | money }} | {{ p.free_cash_flow | money }} |
+{% endfor %}
+{% else %}
+_无季度财务数据（yfinance 未返回）。_
 {% endif %}
 
 ---

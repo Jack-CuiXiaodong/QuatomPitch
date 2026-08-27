@@ -51,6 +51,14 @@ TENQ_ITEMS = {
 #   NVIDIA : "Segment Information - Schedule of Revenue by Market (Details)"
 # 因此用「必须是明细表 + 命中主题 + 不命中噪音」三重条件。
 _DETAIL_RE = re.compile(r"\(detail", re.I)
+
+# 老报送可能没有 MenuCategory，用名称兜底识别三大报表
+_PRIMARY_NAME_RE = re.compile(
+    r"consolidated.*(balance sheet|statements? of (operations|income|cash flow))",
+    re.I,
+)
+# 括注表信息量低；权益变动表又宽又长且内容与现金流量表重复，都跳过
+_PRIMARY_SKIP_RE = re.compile(r"parenthetical|stockholders.{0,3} equity|shareholders", re.I)
 _TABLE_INCLUDE_RE = re.compile(
     r"segment|geograph|by market|by region|by countr|"
     r"product and service|significant product|disaggregat",
@@ -140,10 +148,12 @@ class SecDocsSource(DataSource):
         self,
         max_8k: int = 5,
         max_tables: int = 6,
+        max_primary: int = 4,
         section_max_chars: Optional[int] = None,
     ) -> None:
         self.max_8k = max_8k
         self.max_tables = max_tables
+        self.max_primary = max_primary   # 每份报送最多取几张主报表
         self.section_max_chars = (
             section_max_chars
             if section_max_chars is not None
@@ -165,8 +175,9 @@ class SecDocsSource(DataSource):
 
             picks = self._pick_filings(recent)
             docs: list[FilingDocument] = []
-            tables: list[StatementTable] = []
-            notes: list[str] = []
+            statements: list[StatementTable] = []   # 三大报表原文
+            tables: list[StatementTable] = []       # 分部等附注表
+            warns: list[str] = []
 
             for form, meta in picks:
                 acc_nodash = meta["accession"].replace("-", "")
@@ -174,7 +185,7 @@ class SecDocsSource(DataSource):
                 try:
                     html = client.get_text(url)
                 except httpx.HTTPError as e:
-                    notes.append(f"{form} 正文下载失败：{e}")
+                    warns.append(f"{form} 正文下载失败：{e}")
                     continue
 
                 text = _html_to_text(html)
@@ -197,18 +208,23 @@ class SecDocsSource(DataSource):
                         )
                     )
 
-                # 分部/分产品表只从最近一份 10-K 取，够用且省请求
-                if form == "10-K" and not tables:
-                    tables = self._fetch_tables(
-                        client, ticker, cik_int, acc_nodash, meta["filed"]
+                # R 文件表格从 10-K 和 10-Q 各取一次：10-K 给年度三大报表与分部
+                # 附注，10-Q 给最近一期的季度报表。8-K 没有这些，跳过省请求。
+                if form in ("10-K", "10-Q"):
+                    prim, note_tables = self._fetch_r_tables(
+                        client, ticker, cik_int, acc_nodash, meta["filed"], form
                     )
+                    statements.extend(prim)
+                    if form == "10-K":
+                        tables.extend(note_tables)
 
             out: dict[str, Any] = {
                 "filing_documents": docs,
+                "primary_statements": statements,
                 "statement_tables": tables[: self.max_tables],
             }
-            if notes:
-                out["warning"] = "；".join(notes)
+            if warns:
+                out["warning"] = "；".join(warns)
             return out
         finally:
             client.close()
@@ -308,43 +324,78 @@ class SecDocsSource(DataSource):
         return text[:limit].rstrip(), True
 
     # ------------------------------------------------------------------
-    def _fetch_tables(
+    def _fetch_r_tables(
         self, client: SecClient, ticker: str, cik_int: str,
-        acc_nodash: str, filed: str,
-    ) -> list[StatementTable]:
-        """从 FilingSummary.xml 找出分部/分产品明细表并抽成结构化行。"""
+        acc_nodash: str, filed: str, form: str,
+    ) -> tuple[list[StatementTable], list[StatementTable]]:
+        """从 FilingSummary.xml 取该报送的 R 文件表格。
+
+        返回 (三大报表原文, 附注明细表)。
+
+        R 文件是 SEC 按报送里的 XBRL 渲染出来的**as-filed 报表**，用的是公司自己
+        的行标签，而且**包含自定义扩展标签的行**——companyfacts 接口只暴露
+        us-gaap 标准标签，像 DUOL 的「资本化软件支出」这类挂在公司命名空间下的
+        科目在那里根本取不到，只能从这里拿。
+
+        FilingSummary 的 MenuCategory 字段直接标出哪些报表是主报表，不必靠名称
+        猜；个别老报送没有这个字段，再回退到名称匹配。
+        """
         base = f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}"
         try:
             summary = client.get_text(f"{base}/FilingSummary.xml")
             root = ET.fromstring(summary)
         except (httpx.HTTPError, ET.ParseError):
-            return []
+            return [], []
 
-        out: list[StatementTable] = []
+        primary: list[StatementTable] = []
+        notes: list[StatementTable] = []
+
+        def build(name: str, fn: str, category: str) -> Optional[StatementTable]:
+            try:
+                parsed = self._parse_r_table(client.get_text(f"{base}/{fn}"))
+            except httpx.HTTPError:
+                return None
+            if parsed is None or not parsed["rows"]:
+                return None
+            return StatementTable(
+                ticker=ticker.upper(), title=name, category=category,
+                source_form=form, filing_date=filed, url=f"{base}/{fn}",
+                units=parsed["units"], period_label=parsed["period_label"],
+                columns=parsed["columns"], rows=parsed["rows"],
+            )
+
         for rep in root.findall(".//Report"):
             name = (rep.findtext("ShortName") or "").strip()
             fn = rep.findtext("HtmlFileName") or rep.findtext("XmlFileName") or ""
             if not fn or not name:
                 continue
+            menu = (rep.findtext("MenuCategory") or "").strip().lower()
+
+            is_primary = menu == "statements" or (
+                not menu and _PRIMARY_NAME_RE.search(name)
+            )
+            if is_primary:
+                # 括注表只是把主表里的股数/面值单列出来，信息量低；权益变动表又宽又长，
+                # 其中的回购/分红/股权激励在现金流量表里已有，这里都跳过以控制体量。
+                if _PRIMARY_SKIP_RE.search(name):
+                    continue
+                if len(primary) < self.max_primary:
+                    t = build(name, fn, "primary")
+                    if t:
+                        primary.append(t)
+                continue
+
+            if len(notes) >= self.max_tables:
+                continue
             if not (_DETAIL_RE.search(name) and _TABLE_INCLUDE_RE.search(name)):
                 continue
             if _TABLE_EXCLUDE_RE.search(name):
                 continue
-            try:
-                parsed = self._parse_r_table(client.get_text(f"{base}/{fn}"))
-            except httpx.HTTPError:
-                continue
-            if parsed is None or not parsed["rows"]:
-                continue
-            out.append(StatementTable(
-                ticker=ticker.upper(), title=name, source_form="10-K",
-                filing_date=filed, url=f"{base}/{fn}",
-                units=parsed["units"], period_label=parsed["period_label"],
-                columns=parsed["columns"], rows=parsed["rows"],
-            ))
-            if len(out) >= self.max_tables:
-                break
-        return out
+            t = build(name, fn, "note")
+            if t:
+                notes.append(t)
+
+        return primary, notes
 
     @staticmethod
     def _parse_r_table(html: str) -> Optional[dict]:
@@ -366,6 +417,23 @@ class SecDocsSource(DataSource):
         table = soup.find("table")
         if table is None:
             return None
+
+        # 表头的期间口径靠 colspan 才能对到列上。10-Q 的利润表尤其关键：
+        #   [标题] [3 Months Ended (colspan=2)] [6 Months Ended (colspan=2)]
+        #   [Jun. 30, 2026] [Jun. 30, 2025] [Jun. 30, 2026] [Jun. 30, 2025]
+        # 日期列会重复出现，光看日期分不清哪两列是单季、哪两列是半年累计，
+        # 下游模型会把 2.98 亿的单季营收和 5.90 亿的半年营收当成同一期。
+        span_labels: list[str] = []
+        first_tr = table.find("tr")
+        if first_tr is not None:
+            for idx, td in enumerate(first_tr.find_all(["th", "td"])):
+                if idx == 0:
+                    continue  # 首格是标题，不是期间口径
+                try:
+                    span = max(1, int(td.get("colspan", 1)))
+                except (TypeError, ValueError):
+                    span = 1
+                span_labels.extend([_clean_cell(td.get_text(" "))] * span)
 
         raw: list[list[str]] = []
         for tr in table.find_all("tr"):
@@ -395,6 +463,21 @@ class SecDocsSource(DataSource):
             columns, body = head[1:], raw[1:]
         else:
             columns, body = raw[1], raw[2:]
+
+        # 同一张表里出现多种期间口径时（10-Q 的单季 vs 年初至今），把口径并进
+        # 列名，让每一列都能独立读懂；只有一种口径就不必重复啰嗦。
+        # 时点表（资产负债表）的表头本身就是日期，没有额外口径可标，
+        # 再标一遍会变成「Jun. 30, 2026（Jun. 30, 2026）」。
+        if (
+            len(span_labels) == len(columns)
+            and len(set(span_labels)) > 1
+            and not any(_looks_like_date(lab) for lab in span_labels)
+        ):
+            columns = [
+                f"{col}（{lab}）" if lab else col
+                for col, lab in zip(columns, span_labels)
+            ]
+            period_label = " / ".join(dict.fromkeys(span_labels))
 
         # 单独成行的标签有两类：XBRL 轴标签（如 NVIDIA 的「Revenues and
         # Long-Lived Assets」，在每个真实分组前都重复一次，会把分组名冲掉）

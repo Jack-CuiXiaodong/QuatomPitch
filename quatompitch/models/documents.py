@@ -49,6 +49,8 @@ class StatementTable(BaseModel):
 
     ticker: str
     title: str
+    # "primary" = 三大报表原文（as-filed）；"note" = 附注明细表（分部收入等）
+    category: str = "note"
     units: Optional[str] = None         # 如 "USD ($) $ in Millions"
     period_label: Optional[str] = None  # 如 "12 Months Ended"
     columns: List[str] = Field(default_factory=list)  # 各期表头
