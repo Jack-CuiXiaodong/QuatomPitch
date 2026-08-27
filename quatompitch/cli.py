@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import pipeline
+from .datasources.cache import CACHE
 from .storage import repository as repo
 
 # Windows 中文环境（GBK 代码页）下，一旦 stdout/stderr 被重定向或管道接走，
@@ -29,8 +30,12 @@ console = Console()
 def analyze(
     ticker: str = typer.Argument(..., help="股票代码，如 AAPL"),
     open_file: bool = typer.Option(False, "--open", help="生成后打印报告全文到终端"),
+    refresh: bool = typer.Option(
+        False, "--refresh", help="忽略已有 SEC 缓存，强制重新下载"
+    ),
 ):
     """采集并生成单只股票的研究报告。"""
+    CACHE.refresh = refresh
     console.print(f"[bold cyan]分析 {ticker.upper()}[/] …")
 
     with console.status("采集数据中…", spinner="dots"):
@@ -89,6 +94,24 @@ def reports(
     for r in rows:
         t.add_row(r["ticker"], r["generated_at"], r["summary"] or "", r["path"])
     console.print(t)
+
+
+@app.command()
+def cache(
+    clear: bool = typer.Option(False, "--clear", help="清空 SEC 响应缓存"),
+):
+    """查看或清空 SEC 响应缓存。"""
+    if clear:
+        n = CACHE.clear()
+        console.print(f"[green]已清空 {n} 个缓存文件[/]")
+        return
+    count, size = CACHE.stats()
+    console.print(f"缓存目录：{CACHE.root}")
+    console.print(f"文件数：{count}　占用：{size/1e6:.1f} MB")
+    console.print(
+        f"[dim]报送归档（/Archives/）永久有效；submissions 与 companyfacts "
+        f"{CACHE.ttl_seconds/3600:.0f} 小时过期。[/]"
+    )
 
 
 if __name__ == "__main__":

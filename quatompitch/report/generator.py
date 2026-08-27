@@ -6,6 +6,7 @@ from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..analysis import build_overview
 from ..config import settings
 from ..models import ResearchReport
 
@@ -97,7 +98,8 @@ def _build_env() -> Environment:
 def render_markdown(report: ResearchReport) -> str:
     env = _build_env()
     tmpl = env.get_template("report.md.j2")
-    return tmpl.render(r=report)
+    # 速览是纯派生数据，用完即弃，不进 ResearchReport 也不落库
+    return tmpl.render(r=report, ov=build_overview(report))
 
 
 def write_report(report: ResearchReport) -> Path:

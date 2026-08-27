@@ -23,6 +23,54 @@
 
 ---
 
+## 关键数据速览
+
+> **这是索引，不是结论。** 下面每个数字在正文都有出处、口径和完整上下文；
+> 全是本期数据直接算出的算术值（同比、利润率），不含任何评价或预测。
+> 真正分析请回正文——尤其是「三大报表原文」与「报送正文摘录」两节。
+{% if ov.source %}
+> 财务数字来源：**{{ ov.source }}**。
+{% endif %}
+
+{% if ov.fy %}
+**最新财年（{{ ov.fy.fiscal_date }}{% if ov.fy.filed_date %}，{{ ov.fy.filed_date }} 首次报送{% endif %}）**
+
+| 项目 | 数值 | 同比 | 项目 | 数值 |
+|------|------|------|------|------|
+| 营收 | {{ ov.fy.revenue | money }} | {{ ov.fy_revenue_yoy | pct if ov.fy_revenue_yoy is not none else "—" }} | 毛利率 | {{ ov.fy_gross_margin | pct if ov.fy_gross_margin is not none else "—" }} |
+| 净利润 | {{ ov.fy.net_income | money }} | {{ ov.fy_net_income_yoy | pct if ov.fy_net_income_yoy is not none else "—" }} | 营业利润率 | {{ ov.fy_operating_margin | pct if ov.fy_operating_margin is not none else "—" }} |
+| 稀释EPS | {{ ov.fy.eps_diluted | num }} | — | 净利率 | {{ ov.fy_net_margin | pct if ov.fy_net_margin is not none else "—" }} |
+| 经营现金流 | {{ ov.fy.operating_cash_flow | money }} | — | 现金及等价物 | {{ ov.fy.cash_and_equivalents | money }} |
+| 自由现金流<sup>*</sup> | {{ ov.fy.free_cash_flow | money }} | — | 股东权益 | {{ ov.fy.total_equity | money }} |
+
+<sup>*</sup> 自由现金流为本工具自算（经营现金流 − 购建固定资产 − 资本化软件），非申报科目，口径见「SEC XBRL」一节。
+{% endif %}
+
+{% if ov.fq %}
+**最新财季（{{ ov.fq.fiscal_date }}{% if ov.fq.fiscal_period %} · {{ ov.fq.fiscal_period }}{% endif %}{% if ov.fq.filed_date %}，{{ ov.fq.filed_date }} 首次报送{% endif %}）**
+
+| 项目 | 本季 | 去年同季{% if ov.fq_prev %}（{{ ov.fq_prev.fiscal_date }}）{% endif %} | 同比 |
+|------|------|--------|------|
+| 营收 | {{ ov.fq.revenue | money }} | {{ ov.fq_prev.revenue | money if ov.fq_prev else "—" }} | {{ ov.fq_revenue_yoy | pct if ov.fq_revenue_yoy is not none else "—" }} |
+| 净利润 | {{ ov.fq.net_income | money }} | {{ ov.fq_prev.net_income | money if ov.fq_prev else "—" }} | {{ ov.fq_net_income_yoy | pct if ov.fq_net_income_yoy is not none else "—" }} |
+| 稀释EPS | {{ ov.fq.eps_diluted | num }} | {{ ov.fq_prev.eps_diluted | num if ov.fq_prev else "—" }} | — |
+{% endif %}
+
+**行情与估值**（口径见「估值指标」一节）
+
+| 现价 | 市值 | P/E (TTM) | P/S | EV/EBITDA | ROE |
+|------|------|-----------|-----|-----------|-----|
+| {{ q.price | money(q.currency + " " if q and q.currency else "$") if q else "—" }} | {{ q.market_cap | money if q else "—" }} | {{ v.pe_trailing | num if v else "—" }} | {{ v.ps | num if v else "—" }} | {{ v.ev_ebitda | num if v else "—" }} | {{ v.roe | pct if v else "—" }} |
+
+**最近报送**：10-K {{ ov.latest_10k or "—" }}　·　10-Q {{ ov.latest_10q or "—" }}　·　8-K {{ ov.latest_8k or "—" }}
+
+**内部人交易（仅普通股，近 {{ ov.insider_buys + ov.insider_sells }} 笔）**：增持 {{ ov.insider_buys }} 笔 / 减持 {{ ov.insider_sells }} 笔，净 {{ ov.insider_net_shares | shares if ov.insider_net_shares is not none else "—" }} 股。
+其中**公开市场买入（P 代码）{{ ov.insider_open_market_buys }} 笔** —— 其余「增持」为授予、期权行权或纳税扣股，不是主动买入。
+
+**本文件数据完整性**：三大报表原文 {{ ov.primary_statements }} 张　·　报送正文 {{ "{:,}".format(ov.filing_text_chars) }} 字符　·　自洽性校验 {{ ov.checks_total }} 项{% if ov.checks_failed %}，**{{ ov.checks_failed }} 项有差异**（见「数据自洽性校验」一节）{% else %}，全部通过{% endif %}{% if ov.blocking_warnings %}　·　**采集异常 {{ ov.blocking_warnings }} 处（见文首警示）**{% endif +%}
+
+---
+
 ## 读前须知（写给分析这份文件的模型）
 
 这份文件是**原始资料汇编**，不是分析结论。它只做两件事：把 SEC 报送与行情数据
@@ -60,6 +108,9 @@
   的事实，所以季度现金流常为空——这是刻意的，不是漏采。
 - **10-Q 利润表**同时有单季与累计两组列，已在列名标注为
   `（3 Months Ended）` / `（6 Months Ended）`，**不要混用**。
+- **「报告期」与「首次报送」是两回事**：财报期末到公开披露通常隔 3～6 周。
+  判断「某个时点市场知道什么」要看**首次报送**列，而不是报告期。
+  XBRL 各表已给出该期首次公开的日期与报送编号（accession），可据此溯源。
 
 ### 五、内部人交易的两张表不能相加
 
@@ -162,7 +213,7 @@
 {% for t in r.primary_statements %}
 ### {{ t.title }}
 
-来源：{{ t.source_form }} · 报送日 {{ t.filing_date }}{% if t.units %} · 单位 {{ t.units }}{% endif %}{% if t.period_label %} · {{ t.period_label }}{% endif %}
+来源：{{ t.source_form }} · 报送日 {{ t.filing_date }}{% if t.units %} · 单位 {{ t.units }}{% endif %}{% if t.period_label %} · {{ t.period_label }}{% endif +%}
 
 | 项目 | {{ t.columns | map("cell") | join(" | ") }} |
 |{{ "---|" * t.width }}
@@ -198,10 +249,10 @@ _未取到三大报表原文。_
 {% if r.xbrl_annual %}
 ### 年度（来源：10-K）
 
-| 报告期 | 营收 | 营业成本 | 毛利 | 研发费 | 销管费(合并) | 销售营销费 | 管理费用 | 营业利润 | 税前利润 | 所得税 | 净利润 | 稀释EPS | 报送 |
-|--------|------|----------|------|--------|--------------|------------|----------|----------|----------|--------|--------|---------|------|
+| 报告期 | 首次报送 | 营收 | 营业成本 | 毛利 | 研发费 | 销管费(合并) | 销售营销费 | 管理费用 | 营业利润 | 税前利润 | 所得税 | 净利润 | 稀释EPS | 报送编号 |
+|--------|----------|------|----------|------|--------|--------------|------------|----------|----------|----------|--------|--------|---------|----------|
 {% for p in r.xbrl_annual %}
-| {{ p.fiscal_date }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.sga_expense | money }} | {{ p.selling_marketing_expense | money }} | {{ p.general_admin_expense | money }} | {{ p.operating_income | money }} | {{ p.pretax_income | money }} | {{ p.income_tax_expense | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.accession_no or "—" }} |
+| {{ p.fiscal_date }} | {{ p.filed_date or "—" }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.sga_expense | money }} | {{ p.selling_marketing_expense | money }} | {{ p.general_admin_expense | money }} | {{ p.operating_income | money }} | {{ p.pretax_income | money }} | {{ p.income_tax_expense | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.accession_no or "—" }} |
 {% endfor %}
 
 > 销管费用有两种申报方式：合并报 SG&A（如 Apple），或拆成销售营销费 + 管理费用
@@ -227,10 +278,10 @@ _未取到三大报表原文。_
 {% if r.xbrl_quarterly %}
 ### 季度（来源：10-Q）
 
-| 报告期 | 财季 | 营收 | 营业成本 | 毛利 | 研发费 | 销售营销费 | 营业利润 | 净利润 | 稀释EPS | 经营现金流 | 报送 |
-|--------|------|------|----------|------|--------|------------|----------|--------|---------|------------|------|
+| 报告期 | 财季 | 首次报送 | 营收 | 营业成本 | 毛利 | 研发费 | 销售营销费 | 营业利润 | 净利润 | 稀释EPS | 经营现金流 | 报送编号 |
+|--------|------|----------|------|----------|------|--------|------------|----------|--------|---------|------------|----------|
 {% for p in r.xbrl_quarterly %}
-| {{ p.fiscal_date }} | {{ p.fiscal_period or "—" }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.selling_marketing_expense | money }} | {{ p.operating_income | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.operating_cash_flow | money }} | {{ p.accession_no or "—" }} |
+| {{ p.fiscal_date }} | {{ p.fiscal_period or "—" }} | {{ p.filed_date or "—" }} | {{ p.revenue | money }} | {{ p.cost_of_revenue | money }} | {{ p.gross_profit | money }} | {{ p.rnd_expense | money }} | {{ p.selling_marketing_expense | money }} | {{ p.operating_income | money }} | {{ p.net_income | money }} | {{ p.eps_diluted | num }} | {{ p.operating_cash_flow | money }} | {{ p.accession_no or "—" }} |
 {% endfor %}
 
 > 季度现金流常为空：多数公司在 10-Q 里按「年初至今」口径披露现金流，而非单季。
@@ -289,7 +340,7 @@ _无可校验的数据（需要 SEC XBRL 年度财务数据）。_
 {% for t in r.statement_tables %}
 #### {{ t.title }}
 
-{% if t.units %}单位：{{ t.units }}{% if t.period_label %} · {{ t.period_label }}{% endif %}
+{% if t.units %}单位：{{ t.units }}{% if t.period_label %} · {{ t.period_label }}{% endif +%}
 {% elif t.period_label %}口径：{{ t.period_label }}
 {% endif %}
 

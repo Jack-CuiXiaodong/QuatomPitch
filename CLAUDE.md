@@ -18,8 +18,10 @@ QuatomPitch 是一套**美股辅助交易系统**。命令行输入股票代码�
 
 ```powershell
 .\qp AAPL                # 生成报告 -> reports\AAPL_<日期>.md
+.\qp AAPL --refresh      # 忽略缓存强制重下（SEC 偶发 503 时用）
 .\qp AAPL --open         # 生成并在终端打印全文
 .\qp reports -t AAPL     # 查看历史报告记录
+.\qp cache               # 看缓存占用；--clear 清空
 .\qp test                # 跑单元测试
 ```
 
@@ -60,12 +62,16 @@ quatompitch/
 │   ├── sec_edgar.py        CIK 映射、10-K/10-Q/8-K 索引、Form 4 内部人交易
 │   │                       （SecClient 在此定义：User-Agent + 全局限速）
 │   ├── sec_xbrl.py         XBRL companyfacts：官方结构化财务，可溯源到报送
-│   ├── sec_docs.py         报送正文抽取（业务/风险/MD&A/8-K+EX-99）与分部收入表
+│   ├── sec_docs.py         报送正文抽取（业务/风险/MD&A/8-K+EX-99）、三大报表原文、分部收入表
+│   ├── cache.py            SEC 响应磁盘缓存（/Archives/ 永久，其余按 TTL）
+│   ├── issues.py           IssueLog：局部失败留痕，杜绝「故障伪装成没数据」
 │   ├── fred_source.py      宏观指标（可选）
 │   └── yahoo_news.py       舆情，yfinance.news + RSS 兜底
 ├── models/             pydantic 领域模型（Company/Quote/FinancialPeriod/InsiderTrade/…）
 ├── analysis/
-│   └── valuation.py    估值指标计算（优先财报自算，缺失回退 yfinance 现成值）
+│   ├── valuation.py    估值指标计算（优先财报自算，回退 XBRL / yfinance，带口径标注）
+│   ├── consistency.py  会计恒等式与跨源校验，让映射错误自己暴露
+│   └── overview.py     关键数据速览（纯算术派生，渲染时算，不入库）
 ├── storage/            SQLite + SQLAlchemy（schema / db / repository）
 └── report/
     ├── generator.py    Jinja2 渲染 + 数值格式化 filter（money/num/pct/shares）
@@ -110,7 +116,15 @@ quatompitch/
    实测：营业利润残差恰好等于未归类费用之和（SHOP 2023 的 14.9 亿 = 物流减值 13.4 亿 + 交易损失 1.52 亿）。
    加新科目字段时记得同步更新 `_opex_sum()`，否则残差会假报警。
 11. **派生指标必须写明公式与口径**：原始申报科目可以说「以 SEC 为准」，自算的派生值（自由现金流、ROE、EV/EBITDA…）不行——各家口径不同，且公司自定义 XBRL 标签 companyfacts 取不到。列名带公式、估值表带「口径」列，都是为了让下游模型知道分子分母来自哪个时间窗口。**宁可标注不确定，也不要给一个看起来权威的错数。**
-12. **表格单元格不能含竖线**：SEC 会把 XBRL 多维成员渲染成 `Level 1 | Cash Equivalents`，竖线是 Markdown 列分隔符，原样输出会当场撑破整张表、后面所有行错位。数据层 `_clean_cell()` 换成 `·`，渲染层 `cell` filter 再兜底转义。
+12. **模板改动必须跑结构测试**：`trim_blocks=True` 会吃掉块标签后的换行，这个坑踩过三次
+   （新闻挤成一行、速览末行紧跟 `---` 变 setext 标题、表格前缺空行被当成段落）。
+   症状都不报错、只是渲染不对。行尾若是块标签且下一行是内容，用 `{% endif +%}` 保住换行。
+   `tests/test_report_structure.py` 会渲染一份样本报告扫这些隐患。
+13. **SEC 响应有磁盘缓存**（`datasources/cache.py`）：一次采集约 6 MB，反复分析同一只
+   会重复下载。`/Archives/` 下的报送文件不可变，永久缓存；submissions 与 companyfacts
+   按 TTL（默认 24h）。**只缓存成功响应**，失败照常抛，不被缓存吞掉。
+   命中缓存不消耗限速配额。调试时用 `--refresh` 绕过。
+14. **表格单元格不能含竖线**：SEC 会把 XBRL 多维成员渲染成 `Level 1 | Cash Equivalents`，竖线是 Markdown 列分隔符，原样输出会当场撑破整张表、后面所有行错位。数据层 `_clean_cell()` 换成 `·`，渲染层 `cell` filter 再兜底转义。
 
 ## 当前状态与已知问题
 
@@ -120,7 +134,7 @@ quatompitch/
   - **新闻 10 条挤成 1 行**：`trim_blocks=True` 会吃掉块标签后的换行，而新闻那行以 `{% endif %}` 结尾。已改用 `{% endif +%}`。
 - 运行环境：Python 3.12.10 + `.venv`。实测 pandas 3.0.5 / yfinance 1.6.0 / numpy 2.5.2 下 yfinance 字段映射正常，`_row()` 候选行名无需改动。
 - 2026-08-26 补齐了「大模型原料」缺口：此前报告只有 5K token，10-K/10-Q 只给链接不给正文、无分部收入、季度财报只有 4 个字段。现已加 `sec_xbrl.py`（官方 XBRL 财务，6 年年度 + 10 季度全字段）、`sec_docs.py`（报送正文 + 分部/分产品/分地区收入表），并展开季度表、渲染新闻摘要。AAPL/MSFT/NVDA 实测 43K～94K token。
-- `pytest` 在 `requirements-dev.txt` 里，需单独装（`qp test` 会用到）。共 32 个测试，全部离线。
+- `pytest` 在 `requirements-dev.txt` 里，需单独装（`qp test` 会用到）。共 36 个测试，全部离线。
   解析层测试（`tests/test_parsers.py`）用的是 **真实 SEC 响应** 存在 `tests/fixtures/`：
   手写示例只能验证「我以为 SEC 返回什么」，验证不了它实际返回什么。
   修好一个解析缺陷后，把触发它的那份真实响应存成 fixture 再写测试——
@@ -139,8 +153,13 @@ quatompitch/
 
 ## 后续路线图
 
-- 用真实数据跑通并修复字段映射问题
+已完成：真实数据跑通、SEC XBRL、三大报表原文、自洽性校验、解析层测试、响应缓存。
+
+待办：
 - 扩展数据源：finnhub、Alpha Vantage（预留适配器位）
-- 补充 SEC XBRL 财务数据（直接从 companyfacts 取，交叉验证 yfinance）
-- 完善缓存策略（同一交易日重复分析直接读 SQLite）
-- 补充测试覆盖（数据源解析层）
+- 未映射事实兜底：companyfacts 里有值但没被任何字段接住的概念列成附录
+  （优先级已下降——三大报表原文本就完整，残差校验也能定量指出漏了多少）
+- 构建期 AI 映射助手：`qp maptags` 用大模型提映射建议写进版本控制的映射表，
+  人工审核后流水线仍保持全确定性。**流水线本身永远不调大模型**——
+  同一只股票两次跑出不同数字，对财务数据工具是致命的。
+  先观察残差校验是否长期全绿，若是则不需要这一步。

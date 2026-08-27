@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -14,6 +15,7 @@ import httpx
 from ..config import settings
 from ..models import Filing, InsiderTrade
 from .base import DataSource
+from .cache import CACHE
 from .issues import IssueLog
 
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -56,15 +58,17 @@ class SecClient:
             _LAST_REQUEST_AT = time.monotonic()
 
     def get_json(self, url: str) -> Any:
-        self._throttle()
-        r = self._client.get(url)
-        r.raise_for_status()
-        return r.json()
+        # 走 get_text 以复用同一条缓存路径，不要各缓存各的
+        return json.loads(self.get_text(url))
 
     def get_text(self, url: str) -> str:
+        cached = CACHE.get(url)
+        if cached is not None:
+            return cached  # 命中缓存不消耗限速配额
         self._throttle()
         r = self._client.get(url)
         r.raise_for_status()
+        CACHE.put(url, r.text)  # 只缓存成功响应，失败照常抛
         return r.text
 
     def close(self) -> None:

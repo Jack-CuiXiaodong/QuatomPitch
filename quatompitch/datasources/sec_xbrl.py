@@ -230,6 +230,7 @@ class SecXbrlSource(DataSource):
                 form_type=vals.get("__form__"),
                 accession_no=vals.get("__accn__"),
                 fiscal_period=vals.get("__fp__"),
+                filed_date=vals.get("__filed__"),
                 **clean,
             )
             # 自由现金流：XBRL 没有现成标签，只能自算。

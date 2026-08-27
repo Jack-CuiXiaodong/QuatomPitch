@@ -63,6 +63,9 @@ class FinancialPeriod(BaseModel):
     form_type: Optional[str] = None      # 10-K / 10-Q
     accession_no: Optional[str] = None
     fiscal_period: Optional[str] = None  # FY / Q1 / Q2 / Q3
+    # 该期**首次公开**的日期（不是财报期末）。财报期末与公开之间通常隔 3~6 周，
+    # 判断「市场当时知道什么」要看这个，而不是 fiscal_date。
+    filed_date: Optional[str] = None
 
     source: Optional[str] = None  # yfinance / sec-xbrl
 

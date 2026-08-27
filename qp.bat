@@ -13,6 +13,7 @@ if not exist "%PY%" (
 if "%~1"=="" goto :help
 if /i "%~1"=="analyze" goto :pass
 if /i "%~1"=="reports" goto :pass
+if /i "%~1"=="cache"   goto :pass
 if /i "%~1"=="test"    goto :test
 if /i "%~1"=="-h"      goto :help
 if /i "%~1"=="--help"  goto :help

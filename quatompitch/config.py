@@ -35,9 +35,20 @@ class Settings(BaseSettings):
     # 设为 0 表示不截断，整篇写进报告。
     sec_section_max_chars: int = 40000
 
+    # SEC 响应磁盘缓存。/Archives/ 下的报送文件不可变、永久缓存；
+    # submissions 与 companyfacts 按 TTL（默认当天有效）。
+    quatompitch_cache_dir: str = "data/cache"
+    cache_enabled: bool = True
+    cache_ttl_hours: float = 24.0
+
     @property
     def db_path(self) -> Path:
         p = Path(self.quatompitch_db_path)
+        return p if p.is_absolute() else ROOT_DIR / p
+
+    @property
+    def cache_dir(self) -> Path:
+        p = Path(self.quatompitch_cache_dir)
         return p if p.is_absolute() else ROOT_DIR / p
 
     @property

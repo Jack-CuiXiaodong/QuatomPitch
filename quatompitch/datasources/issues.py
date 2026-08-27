@@ -28,9 +28,16 @@ class IssueLog:
         self.source = source
         self._items: list[str] = []
 
+    # 异常信息里的换行会撑破报告的引用块与表格；httpx 的报错还会附一长串
+    # MDN 链接，对判断问题毫无帮助，一并截掉。
+    _MAX_DETAIL = 160
+
     def record(self, what: str, err: BaseException | str) -> None:
         """记一次局部失败。`what` 说明是哪一步，`err` 是原因。"""
         detail = err if isinstance(err, str) else f"{type(err).__name__}: {err}"
+        detail = " ".join(str(detail).split())
+        if len(detail) > self._MAX_DETAIL:
+            detail = detail[: self._MAX_DETAIL].rstrip() + "…"
         self._items.append(f"{what}（{detail}）")
 
     def __bool__(self) -> bool:
