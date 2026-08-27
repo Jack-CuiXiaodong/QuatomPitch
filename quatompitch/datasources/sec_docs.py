@@ -22,6 +22,7 @@ from bs4 import BeautifulSoup
 from ..config import settings
 from ..models import FilingDocument, FilingSection, StatementTable
 from .base import DataSource
+from .issues import IssueLog
 from .sec_edgar import ARCHIVE_BASE, SUBMISSIONS_URL, SecClient, resolve_cik
 
 try:  # bs4 对带 XML 声明的 .htm 会告警，正文解析不受影响
@@ -163,6 +164,7 @@ class SecDocsSource(DataSource):
     # ------------------------------------------------------------------
     def fetch(self, ticker: str) -> dict[str, Any]:
         client = SecClient()
+        issues = IssueLog("报送正文与报表")
         try:
             cik = resolve_cik(client, ticker)
             if not cik:
@@ -177,7 +179,6 @@ class SecDocsSource(DataSource):
             docs: list[FilingDocument] = []
             statements: list[StatementTable] = []   # 三大报表原文
             tables: list[StatementTable] = []       # 分部等附注表
-            warns: list[str] = []
 
             for form, meta in picks:
                 acc_nodash = meta["accession"].replace("-", "")
@@ -185,16 +186,16 @@ class SecDocsSource(DataSource):
                 try:
                     html = client.get_text(url)
                 except httpx.HTTPError as e:
-                    warns.append(f"{form} 正文下载失败：{e}")
+                    issues.record(f"{form}（{meta['filed']}）正文下载失败", e)
                     continue
 
                 text = _html_to_text(html)
                 sections = self._extract_sections(form, text)
                 if form == "8-K":
                     # 8-K 正文往往只说「详见附件」，业绩数字都在 EX-99.x 新闻稿里
-                    sections.extend(
-                        self._fetch_8k_exhibits(client, cik_int, acc_nodash, meta["doc"])
-                    )
+                    sections.extend(self._fetch_8k_exhibits(
+                        client, cik_int, acc_nodash, meta["doc"], issues
+                    ))
                 if sections:
                     docs.append(
                         FilingDocument(
@@ -212,7 +213,8 @@ class SecDocsSource(DataSource):
                 # 附注，10-Q 给最近一期的季度报表。8-K 没有这些，跳过省请求。
                 if form in ("10-K", "10-Q"):
                     prim, note_tables = self._fetch_r_tables(
-                        client, ticker, cik_int, acc_nodash, meta["filed"], form
+                        client, ticker, cik_int, acc_nodash, meta["filed"], form,
+                        issues,
                     )
                     statements.extend(prim)
                     if form == "10-K":
@@ -223,8 +225,8 @@ class SecDocsSource(DataSource):
                 "primary_statements": statements,
                 "statement_tables": tables[: self.max_tables],
             }
-            if warns:
-                out["warning"] = "；".join(warns)
+            if issues:
+                out["warning"] = issues.as_warning()
             return out
         finally:
             client.close()
@@ -291,12 +293,14 @@ class SecDocsSource(DataSource):
 
     def _fetch_8k_exhibits(
         self, client: SecClient, cik_int: str, acc_nodash: str, primary_doc: str,
+        issues: IssueLog,
     ) -> list[FilingSection]:
         """抓 8-K 的 EX-99.x 附件（业绩新闻稿），最多一份。"""
         base = f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}"
         try:
             idx = client.get_json(f"{base}/index.json")
-        except httpx.HTTPError:
+        except httpx.HTTPError as e:
+            issues.record("8-K 附件目录取不到", e)
             return []
         for item in idx.get("directory", {}).get("item", []):
             name = item.get("name", "")
@@ -306,7 +310,8 @@ class SecDocsSource(DataSource):
                 continue
             try:
                 text = _html_to_text(client.get_text(f"{base}/{name}"))
-            except httpx.HTTPError:
+            except httpx.HTTPError as e:
+                issues.record(f"8-K 附件 {name} 下载失败", e)
                 continue
             if len(text) < 200:
                 continue
@@ -326,7 +331,7 @@ class SecDocsSource(DataSource):
     # ------------------------------------------------------------------
     def _fetch_r_tables(
         self, client: SecClient, ticker: str, cik_int: str,
-        acc_nodash: str, filed: str, form: str,
+        acc_nodash: str, filed: str, form: str, issues: IssueLog,
     ) -> tuple[list[StatementTable], list[StatementTable]]:
         """从 FilingSummary.xml 取该报送的 R 文件表格。
 
@@ -344,7 +349,10 @@ class SecDocsSource(DataSource):
         try:
             summary = client.get_text(f"{base}/FilingSummary.xml")
             root = ET.fromstring(summary)
-        except (httpx.HTTPError, ET.ParseError):
+        except (httpx.HTTPError, ET.ParseError) as e:
+            # 这一份取不到，整份报送的三大报表与分部表就都没了——必须留痕，
+            # 否则报告里那两节会静默变空，看起来像「公司没披露」。
+            issues.record(f"{form}（{filed}）FilingSummary 取不到，本份报表全部缺失", e)
             return [], []
 
         primary: list[StatementTable] = []
@@ -353,7 +361,8 @@ class SecDocsSource(DataSource):
         def build(name: str, fn: str, category: str) -> Optional[StatementTable]:
             try:
                 parsed = self._parse_r_table(client.get_text(f"{base}/{fn}"))
-            except httpx.HTTPError:
+            except httpx.HTTPError as e:
+                issues.record(f"{form} 报表「{name[:30]}」下载失败", e)
                 return None
             if parsed is None or not parsed["rows"]:
                 return None

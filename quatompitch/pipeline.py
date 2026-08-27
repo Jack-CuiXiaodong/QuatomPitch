@@ -82,8 +82,6 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     sec = results.get("sec", {})
     report.filings = sec.get("filings", []) or []
     report.insider_trades = sec.get("insider_trades", []) or []
-    if sec.get("warning"):
-        report.warnings.append(sec["warning"])
     # 回填 CIK 到 company
     if report.company and sec.get("cik"):
         report.company.cik = sec["cik"]
@@ -91,15 +89,11 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     xbrl = results.get("xbrl", {})
     report.xbrl_annual = xbrl.get("xbrl_annual", []) or []
     report.xbrl_quarterly = xbrl.get("xbrl_quarterly", []) or []
-    if xbrl.get("warning"):
-        report.warnings.append(xbrl["warning"])
 
     docs = results.get("docs", {})
     report.filing_documents = docs.get("filing_documents", []) or []
     report.primary_statements = docs.get("primary_statements", []) or []
     report.statement_tables = docs.get("statement_tables", []) or []
-    if docs.get("warning"):
-        report.warnings.append(docs["warning"])
 
     news = results.get("news", {})
     report.news = news.get("news", []) or []
@@ -108,6 +102,14 @@ def analyze(ticker: str, progress=None) -> tuple[ResearchReport, Path]:
     report.macro = fred.get("macro", []) or []
     if fred.get("skipped"):
         report.warnings.append(fred["skipped"])
+
+    # 统一收集各数据源上报的局部失败。放在一处而不是散在各段，
+    # 是为了保证新增数据源时不会漏接它的 warning——之前 yfinance 和 news
+    # 的失败就是这么被丢在地上的。
+    for name in sources:
+        w = results.get(name, {}).get("warning")
+        if w:
+            report.warnings.append(w)
 
     # --- 清洗与排序（必须在算估值之前：估值取 [0] 当最近一期）---
     # yfinance 偶尔会给出报告期却整行没有数值，留着只会在报告里渲染成一排「—」，

@@ -9,6 +9,7 @@ import yfinance as yf
 
 from ..models import NewsItem
 from .base import DataSource
+from .issues import IssueLog
 
 RSS_URL = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
 
@@ -27,16 +28,22 @@ class YahooNewsSource(DataSource):
         self.limit = limit
 
     def fetch(self, ticker: str) -> dict[str, Any]:
-        items = self._from_yfinance(ticker)
+        issues = IssueLog("舆情")
+        items = self._from_yfinance(ticker, issues)
         if not items:
-            items = self._from_rss(ticker)
-        return {"news": items[: self.limit]}
+            items = self._from_rss(ticker, issues)
+        out: dict[str, Any] = {"news": items[: self.limit]}
+        # 两条路都失败才算问题；主路失败但 RSS 兜底成功不必打扰用户
+        if issues and not items:
+            out["warning"] = issues.as_warning()
+        return out
 
-    def _from_yfinance(self, ticker: str) -> list[NewsItem]:
+    def _from_yfinance(self, ticker: str, issues: IssueLog) -> list[NewsItem]:
         out: list[NewsItem] = []
         try:
             raw = yf.Ticker(ticker).news or []
-        except Exception:
+        except Exception as e:
+            issues.record("yfinance 新闻接口失败，改用 RSS 兜底", e)
             return out
         for n in raw:
             # yfinance 新版把字段放在 content 下，旧版是扁平结构，两者都兼容
@@ -68,11 +75,12 @@ class YahooNewsSource(DataSource):
             )
         return out
 
-    def _from_rss(self, ticker: str) -> list[NewsItem]:
+    def _from_rss(self, ticker: str, issues: IssueLog) -> list[NewsItem]:
         out: list[NewsItem] = []
         try:
             feed = feedparser.parse(RSS_URL.format(ticker=ticker))
-        except Exception:
+        except Exception as e:
+            issues.record("RSS 兜底也失败", e)
             return out
         for e in feed.entries:
             out.append(

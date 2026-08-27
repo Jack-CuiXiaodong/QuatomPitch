@@ -78,6 +78,14 @@ quatompitch/
 
 1. **三层解耦**：数据源 / 指标计算 / 报告模板互不依赖。新增数据源只需实现 `DataSource.fetch()` 并在 `pipeline.py` 的 `sources` 字典注册，不改其它模块。
 2. **单源失败不影响整体**：`pipeline.analyze()` 用线程池并发采集，任一数据源抛异常都被捕获、记入 `report.warnings`，报告照常生成。修改时保持这个容错性。
+   各源上报的局部失败由 pipeline 末尾**统一收集**（遍历 `sources` 取 `warning` 键），
+   不要散在各段——yfinance 和 news 的告警就曾因为漏接而被丢在地上。
+2b. **空结果只能表示「数据确实不存在」**（`datasources/issues.py`）：取数故障必须
+   用 `IssueLog.record()` 留痕，**绝不能就地 `except: return []`**。
+   Form 4 恒为 0 就是这么藏住的——取回的是 HTML 不是 XML，`ParseError` 被吞掉后
+   返回空列表，和「这家公司没有内部人交易」长得一模一样。
+   同理：yfinance 偶发整片返回空 → 估值表全「—」；FilingSummary 取不到 → 三大报表整节消失。
+   `_float` / `_num` 这类把**坏值**转 None 的守卫是另一回事，保持原样。
 3. **SEC 限速与 User-Agent**：`SecClient` 内置节流（默认 8 req/s，SEC 上限约 10）和 User-Agent 头。**不要绕过**，否则会被 SEC 封。限速状态是**模块级全局**（`_RATE_LOCK` + `_LAST_REQUEST_AT`），因为 pipeline 会并发跑 sec / xbrl / docs 三个 SEC 数据源——若各自计时会叠加到 24 req/s 直接超限。新增 SEC 数据源必须复用 `SecClient`，不要自己发请求。
 4. **估值指标回退策略**：`compute_valuation()` 优先用财报自算（ROE、EV/EBITDA、P/S、P/B），拿不到则回退 yfinance 的现成字段。
 5. **数据库 UPSERT**：`repository.py` 用 SQLite `ON CONFLICT DO UPDATE`，重复分析同一股票不会产生脏数据。
@@ -112,7 +120,12 @@ quatompitch/
   - **新闻 10 条挤成 1 行**：`trim_blocks=True` 会吃掉块标签后的换行，而新闻那行以 `{% endif %}` 结尾。已改用 `{% endif +%}`。
 - 运行环境：Python 3.12.10 + `.venv`。实测 pandas 3.0.5 / yfinance 1.6.0 / numpy 2.5.2 下 yfinance 字段映射正常，`_row()` 候选行名无需改动。
 - 2026-08-26 补齐了「大模型原料」缺口：此前报告只有 5K token，10-K/10-Q 只给链接不给正文、无分部收入、季度财报只有 4 个字段。现已加 `sec_xbrl.py`（官方 XBRL 财务，6 年年度 + 10 季度全字段）、`sec_docs.py`（报送正文 + 分部/分产品/分地区收入表），并展开季度表、渲染新闻摘要。AAPL/MSFT/NVDA 实测 43K～94K token。
-- `pytest` 在 `requirements-dev.txt` 里，需单独装（`qp test` 会用到）。
+- `pytest` 在 `requirements-dev.txt` 里，需单独装（`qp test` 会用到）。共 32 个测试，全部离线。
+  解析层测试（`tests/test_parsers.py`）用的是 **真实 SEC 响应** 存在 `tests/fixtures/`：
+  手写示例只能验证「我以为 SEC 返回什么」，验证不了它实际返回什么。
+  修好一个解析缺陷后，把触发它的那份真实响应存成 fixture 再写测试——
+  本轮修的每个解析 bug（XSLT 前缀、衍生品表、分组标签、竖线撑表、colspan 期间口径）
+  都在那里钉着。
 - 报送正文单章节默认截断在 40,000 字符（`sec_section_max_chars`，设 0 则不截断）。风险因素动辄十几万字，不截会把报告撑爆。
 - 已知数据口径问题（暂未处理，非 bug）：
   - 年度财报最老一期常常整行为空 —— yfinance 一般只给 4 个完整财年，模板按约定渲染成 `—`。

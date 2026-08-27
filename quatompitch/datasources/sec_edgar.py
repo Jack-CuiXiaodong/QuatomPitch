@@ -14,6 +14,7 @@ import httpx
 from ..config import settings
 from ..models import Filing, InsiderTrade
 from .base import DataSource
+from .issues import IssueLog
 
 SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
@@ -103,12 +104,14 @@ def _float(el: Optional[ET.Element], path: str) -> Optional[float]:
 
 
 def _parse_form4_xml(xml_text: str, ticker: str, filing_url: str) -> list[InsiderTrade]:
-    """解析 Form 4 XML，抽取非衍生品（普通股）交易。"""
+    """解析 Form 4 XML，抽取普通股与衍生品交易。
+
+    **解析失败会抛 ET.ParseError，不要在这里吞掉。** 拿到的东西不是 XML 属于
+    取数故障（例如误取了 XSLT 渲染后的 HTML），和「这家公司没有内部人交易」
+    是两回事。返回空列表只允许表示后者。调用方负责记录失败。
+    """
     trades: list[InsiderTrade] = []
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return trades
+    root = ET.fromstring(xml_text)
 
     owner_name = _text(root, ".//reportingOwner/reportingOwnerId/rptOwnerName")
     rel = root.find(".//reportingOwner/reportingOwnerRelationship")
@@ -180,6 +183,7 @@ class SecEdgarSource(DataSource):
 
     def fetch(self, ticker: str) -> dict[str, Any]:
         client = SecClient()
+        issues = IssueLog("SEC 报送与内部人交易")
         try:
             cik = resolve_cik(client, ticker)
             if not cik:
@@ -227,25 +231,28 @@ class SecEdgarSource(DataSource):
                 if form == "4" and len(form4_refs) < self.max_form4:
                     form4_refs.append((acc_nodash, pdoc))
 
-            # 解析 Form 4 明细
+            # 解析 Form 4 明细。单份取不到不影响其余，但必须留痕——
+            # 否则「一份都没解析成功」和「这家公司没有内部人交易」无法区分。
             insider_trades: list[InsiderTrade] = []
             for acc_nodash, pdoc in form4_refs:
-                xml_url = self._find_form4_xml(client, cik_int, acc_nodash, pdoc)
-                if not xml_url:
-                    continue
                 try:
+                    xml_url = self._find_form4_xml(client, cik_int, acc_nodash, pdoc)
+                    if not xml_url:
+                        issues.record(f"Form 4 {acc_nodash} 未定位到 XML", "无匹配文件")
+                        continue
                     xml_text = client.get_text(xml_url)
-                except httpx.HTTPError:
-                    continue
-                insider_trades.extend(
-                    _parse_form4_xml(xml_text, ticker, xml_url)
-                )
+                    insider_trades.extend(_parse_form4_xml(xml_text, ticker, xml_url))
+                except (httpx.HTTPError, ET.ParseError) as e:
+                    issues.record(f"Form 4 {acc_nodash} 解析失败", e)
 
-            return {
+            out: dict[str, Any] = {
                 "cik": cik,
                 "filings": filings,
                 "insider_trades": insider_trades,
             }
+            if issues:
+                out["warning"] = issues.as_warning()
+            return out
         finally:
             client.close()
 
@@ -259,13 +266,9 @@ class SecEdgarSource(DataSource):
         if pdoc and pdoc.lower().endswith(".xml"):
             name = pdoc.rsplit("/", 1)[-1] if pdoc.lower().startswith("xsl") else pdoc
             return f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/{name}"
-        # 否则读取该报送目录的 index.json，找非 xslt 的 xml 文件
-        try:
-            idx = client.get_json(
-                f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/index.json"
-            )
-        except httpx.HTTPError:
-            return None
+        # 否则读取该报送目录的 index.json，找非 xslt 的 xml 文件。
+        # 这里的 HTTPError 交给调用方记录，不在此吞掉。
+        idx = client.get_json(f"{ARCHIVE_BASE}/{cik_int}/{acc_nodash}/index.json")
         items = idx.get("directory", {}).get("item", [])
         for it in items:
             nm = it.get("name", "")

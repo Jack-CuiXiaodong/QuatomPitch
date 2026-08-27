@@ -8,6 +8,7 @@ import yfinance as yf
 
 from ..models import Company, FinancialPeriod, Quote
 from .base import DataSource
+from .issues import IssueLog
 
 
 def _num(v: Any) -> Optional[float]:
@@ -91,11 +92,14 @@ class YFinanceSource(DataSource):
 
     def fetch(self, ticker: str) -> dict[str, Any]:
         t = yf.Ticker(ticker)
+        issues = IssueLog("yfinance 行情与财报")
         info = {}
         try:
             info = t.info or {}
-        except Exception:
-            info = {}
+        except Exception as e:
+            # info 挂掉意味着公司信息、行情、以及全部现成估值指标都没了，
+            # 静默返回空字典会让报告看起来像「这家公司没有行情」。
+            issues.record("公司信息与行情（info）获取失败", e)
 
         company = Company(
             ticker=ticker.upper(),
@@ -124,17 +128,18 @@ class YFinanceSource(DataSource):
             dividend_yield=_num(info.get("dividendYield")),
         )
 
-        # 三大报表（年度 + 季度）
+        # 三大报表（年度 + 季度）。yfinance 是抓取式接口，偶发整片返回空，
+        # 每张表单独记录失败，避免「抓取失败」和「公司没披露」混为一谈。
         annual = _periods_from_statements(
-            _safe(lambda: t.income_stmt),
-            _safe(lambda: t.balance_sheet),
-            _safe(lambda: t.cashflow),
+            _safe(lambda: t.income_stmt, issues, "年度利润表"),
+            _safe(lambda: t.balance_sheet, issues, "年度资产负债表"),
+            _safe(lambda: t.cashflow, issues, "年度现金流量表"),
             "FY",
         )
         quarterly = _periods_from_statements(
-            _safe(lambda: t.quarterly_income_stmt),
-            _safe(lambda: t.quarterly_balance_sheet),
-            _safe(lambda: t.quarterly_cashflow),
+            _safe(lambda: t.quarterly_income_stmt, issues, "季度利润表"),
+            _safe(lambda: t.quarterly_balance_sheet, issues, "季度资产负债表"),
+            _safe(lambda: t.quarterly_cashflow, issues, "季度现金流量表"),
             "FQ",
         )
 
@@ -154,18 +159,25 @@ class YFinanceSource(DataSource):
             "currentRatio": _num(info.get("currentRatio")),
         }
 
-        return {
+        out: dict[str, Any] = {
             "company": company,
             "quote": quote,
             "annual_financials": annual,
             "quarterly_financials": quarterly,
             "info_metrics": info_metrics,
         }
+        if issues:
+            out["warning"] = issues.as_warning()
+        return out
 
 
-def _safe(fn):
-    """调用可能抛异常的 yfinance 属性访问，失败返回 None。"""
+def _safe(fn, issues: IssueLog, what: str):
+    """调用可能抛异常的 yfinance 属性访问。
+
+    失败返回 None，但**必须留痕**：拿不到报表和公司没有报表是两回事。
+    """
     try:
         return fn()
-    except Exception:
+    except Exception as e:
+        issues.record(f"{what}获取失败", e)
         return None
