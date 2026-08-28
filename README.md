@@ -1,63 +1,75 @@
 # QuatomPitch
 
-**把一只美股的公开资料，压成一份能直接喂给大模型的 Markdown。**
-
-输入股票代码，自动从 SEC EDGAR 与行情源采集数据，产出一份 5～15 万 token 的
-结构化研究报告。报告里带 10-K/10-Q/8-K 的**正文原文**（大模型打不开链接）、
-三大报表的**申报原文**、分部收入、内部人交易明细，以及每个数字的来源与口径标注。
+QuatomPitch turns a US stock ticker into a single, structured Markdown report — pulled
+live from SEC EDGAR and market data sources — designed to be handed straight to an LLM
+for deep, conversational analysis. This project is for **educational and research**
+purposes.
 
 ```bash
 qp AAPL
-# -> reports/AAPL_2026-08-28.md
+# -> reports/AAPL_2026-08-28.md  (50K-150K tokens of primary-source data)
 ```
 
-## 这个工具做什么、不做什么
+Note: the tool does not screen stocks, score candidates, or produce buy/sell
+recommendations. It collects and structures data — the analysis happens in your
+conversation with the LLM afterward.
 
-**做**：把数据采全、采准，并把每个数字的来源、口径、可信度标清楚。
+## Disclaimer
 
-**不做**：估值判断、选股筛选、打分排序、买卖建议。那是你拿着这份 MD 去和大模型
-对话时该做的事。报告里的 P/E、ROE 等指标只作为**数据**呈现，不参与任何筛选。
+This project is for **educational and research purposes only**.
 
-## 报告里有什么
+- Not intended for real trading or investment
+- No investment advice or guarantees provided
+- Valuation metrics (P/E, ROE, EV/EBITDA, etc.) are presented as data only — never
+  used for screening or ranking
+- Creator assumes no liability for financial losses
+- Consult a financial advisor for investment decisions
+- Data may be delayed or diverge from official filings; always defer to the source
 
-| 章节 | 内容 |
-|------|------|
-| 关键数据速览 | 最新财年/财季核心科目 + 同比、利润率、行情估值。**是索引不是结论** |
-| 读前须知 | 写给消费这份文件的模型：数据源优先级、口径陷阱、`—` 的含义 |
-| 三大报表原文 | 报送里 SEC 渲染的 as-filed 报表，**含公司自定义扩展标签的行** |
-| SEC XBRL | 归一化财务数据，6 年年度 + 10 季度，可溯源到 accession |
-| 数据自洽性校验 | 会计恒等式当场核对，让科目映射错误自己暴露 |
-| 分部 · 分产品 · 分地区收入 | 从报表附注抽取（XBRL 接口拿不到带维度的数据） |
-| 内部人交易 | Form 4 明细，普通股与衍生品分表 |
-| 报送正文摘录 | 业务概述、风险因素、MD&A、8-K 事件与 EX-99 业绩新闻稿 |
-| 市场舆情 | 标题 + 摘要 |
+By using this software, you agree to use it solely for learning purposes.
 
-## 设计上的几个取舍
+## What's in a report
 
-**数据源有优先级，冲突时以报送原文为准。**
-`三大报表原文（as-filed）` → `XBRL companyfacts（归一化）` → `yfinance（第三方）`。
-前者用公司自己的行标签、科目一行不少；后者可跨公司比较但只覆盖 us-gaap 标准标签。
-靠往标签候选表里不断加名字去补缺口是打地鼠——us-gaap 有 500 多个概念，
-各家挑哪个是它自己的事。
+| Section | Content |
+|---|---|
+| Key metrics snapshot | Latest FY/FQ figures, YoY, margins — an index, not a conclusion |
+| Reading notes | Source priority, what `—` means, timing pitfalls — written for the LLM that consumes the file |
+| Primary financial statements | As-filed statements rendered by SEC, in the company's own line labels — including custom XBRL tags |
+| SEC XBRL financials | Normalized data, 6 fiscal years + 10 quarters, traceable to each filing |
+| Consistency checks | Accounting identities verified on the spot, so mapping errors surface themselves |
+| Segment / product / geographic revenue | Pulled from filing footnotes |
+| Insider trades | Form 4 detail, common stock and derivatives in separate tables |
+| Filing text excerpts | Business, risk factors, MD&A, 8-K events + EX-99 press releases |
+| Market news | Headlines with summaries |
 
-**空结果只能表示「数据确实不存在」。**
-取数故障必须留痕，绝不静默返回空列表。否则「抓取失败」会伪装成「公司没披露」——
-本项目的内部人交易曾长期显示为 0，就是因为取回的是 HTML 不是 XML，
-解析异常被就地吞掉。
+## Design principles
 
-**错数比缺数危险。**
-缺一格是 `—`，一眼可见；取错标签却会输出一个量级合理的数字，谁都看不出来。
-所以报告里当场核会计恒等式（毛利=营收−成本、总资产=负债+权益、营业利润残差），
-对不上就如实报差额。实测中残差往往精确等于某个未归类的一次性科目。
+**Source priority, and what wins when they disagree.**
+`As-filed statements` → `SEC XBRL (normalized)` → `yfinance (third-party)`. The first
+uses the company's own labels and never drops a line item — including ones filed under
+custom XBRL extensions. Chasing every custom tag by hand is whack-a-mole; there are 500+
+us-gaap concepts and each company picks its own.
 
-**派生值必须写明公式。**
-自由现金流、ROE、EV/EBITDA 这些是本工具自算的，各家口径不同。
-列名带公式、估值表带「口径」列，让下游模型知道分子分母来自哪个时间窗口。
-宁可标注不确定，也不给一个看起来权威的错数。
+**An empty result must mean "this data doesn't exist" — never "the fetch failed."**
+A silently swallowed exception makes a real failure indistinguishable from a company
+having no data. This project's insider-trade count sat at zero for a while because of
+exactly that: the parser fetched a rendered HTML page instead of raw XML, the parse
+error was caught, and an empty list looked identical to "no insider activity."
 
-## 安装
+**A wrong number is worse than a missing one.**
+A blank cell is visibly `—`; a mislabeled value looks like a perfectly reasonable
+number. So the report cross-checks accounting identities on the spot (gross profit =
+revenue − COGS, assets = liabilities + equity, an operating-income residual) and
+reports the delta when they don't reconcile.
 
-需要 Python 3.10+。
+**Derived values carry their formula.**
+Free cash flow, ROE, EV/EBITDA and friends are computed by this tool, not filed by the
+company — conventions vary and custom XBRL tags aren't available via the standard API.
+Column names and a "basis" column spell out exactly what was divided by what.
+
+## Install
+
+Requires Python 3.10+.
 
 ```bash
 python -m venv .venv
@@ -67,68 +79,76 @@ python -m venv .venv
 cp .env.example .env     # Windows: copy .env.example .env
 ```
 
-编辑 `.env` 填 `SEC_USER_AGENT`（SEC 强制要求，格式 `应用名 你的邮箱`，不填会被拒绝）。
-`FRED_API_KEY` 可选，留空则跳过宏观模块。
+### Environment variables
 
-## 使用
+Edit `.env`:
 
-Windows 下用根目录的 `qp.bat`，直接调 `.venv` 里的 python，不需要激活虚拟环境：
+- `SEC_USER_AGENT` — **required**. SEC rejects unidentified traffic. Format:
+  `"YourApp your-email@example.com"`.
+- `FRED_API_KEY` — optional, free at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html).
+  Leave blank to skip the macro section.
 
-```powershell
-.\qp AAPL                # 生成报告
-.\qp AAPL --refresh      # 忽略缓存强制重下（SEC 偶发 503 时用）
-.\qp AAPL --open         # 生成并打印全文
-.\qp reports -t AAPL     # 历史报告记录
-.\qp cache               # 查看缓存占用；--clear 清空
-.\qp test                # 跑测试
+## How to Run
+
+On Windows, use `qp.bat` at the repo root — it calls the venv's Python directly, so you
+never need to activate the virtualenv:
+
+```bash
+qp AAPL                # generate a report
+qp AAPL --refresh      # bypass the cache and re-fetch
+qp AAPL --open         # generate and print the full report
+qp reports -t AAPL     # list past reports for a ticker
+qp cache               # inspect the response cache; --clear to empty it
+qp test                # run the test suite
 ```
 
-其它平台直接调模块：
+On other platforms, call the module directly:
 
 ```bash
 python -m quatompitch.cli analyze AAPL
 ```
 
-## 结构
-
-```
-quatompitch/
-├── cli.py              命令行入口（analyze / reports / cache）
-├── pipeline.py         并发采集 → 计算 → 校验 → 存储 → 生成
-├── datasources/
-│   ├── sec_edgar.py      CIK 映射、报送索引、Form 4（SecClient 全局限速在此）
-│   ├── sec_xbrl.py       XBRL companyfacts
-│   ├── sec_docs.py       报送正文、三大报表原文、分部收入表
-│   ├── cache.py          响应磁盘缓存（/Archives/ 永久，其余按 TTL）
-│   ├── issues.py         局部失败留痕
-│   ├── yfinance_source.py / yahoo_news.py / fred_source.py
-├── analysis/
-│   ├── valuation.py      估值指标（带口径标注）
-│   ├── consistency.py    会计恒等式校验
-│   └── overview.py       关键数据速览
-├── models/             pydantic 领域模型
-├── storage/            SQLite + SQLAlchemy
-└── report/             Jinja2 模板与渲染
-```
-
-详见 [docs/architecture.md](docs/architecture.md)，开发约定见 [CLAUDE.md](CLAUDE.md)。
-
-## 测试
-
-36 个测试，全部离线。解析层的 fixture 是**真实 SEC 响应**（`tests/fixtures/`）——
-手写示例只能验证「我以为 SEC 返回什么」，验证不了它实际返回什么。
+## Development
 
 ```bash
-.\qp test
+git clone https://github.com/Jack-CuiXiaodong/QuatomPitch.git
+cd QuatomPitch
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r requirements.txt
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest tests/ -q
 ```
 
-## 扩展数据源
+36 tests, all offline. Parser tests replay **real SEC responses** stored in
+`tests/fixtures/` — a hand-written sample only proves what you assumed SEC returns, not
+what it actually does.
 
-实现 `datasources/base.py` 的 `DataSource.fetch(ticker) -> dict`，
-在 `pipeline.py` 的 `sources` 字典注册即可，不改其它模块。
-新增 SEC 数据源必须复用 `SecClient`——限速是进程级共享的，自己发请求会超限被封。
+### Adding a data source
 
-## 免责声明
+Implement `DataSource.fetch(ticker) -> dict` in `datasources/base.py` and register it in
+`pipeline.py`'s `sources` dict — no other module changes needed. Any new SEC source must
+reuse `SecClient`; it owns the process-wide rate limiter, and a second client bypassing
+it will get the whole project rate-limited by SEC.
 
-本工具仅供研究参考，**不构成投资建议**。数据可能存在延迟或口径差异，请以官方披露为准。
-报告中的估值指标为机械计算结果，未经人工复核。
+See [docs/architecture.md](docs/architecture.md) for the full design, and
+[CLAUDE.md](CLAUDE.md) for the working conventions this codebase follows.
+
+## How to Contribute
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+**Important**: please keep pull requests small and focused — it makes them much easier
+to review and merge.
+
+## Feature Requests
+
+Open an [issue](https://github.com/Jack-CuiXiaodong/QuatomPitch/issues) tagged
+`enhancement`.
+
+## License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.

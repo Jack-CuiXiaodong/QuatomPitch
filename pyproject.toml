@@ -3,6 +3,7 @@ name = "quatompitch"
 version = "1.0.0"
 description = "美股辅助交易系统 —— 采集财务数据与重大信息，生成结构化 Markdown 研究报告"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "yfinance>=0.2.40",
