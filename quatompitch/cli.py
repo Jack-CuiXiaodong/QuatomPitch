@@ -9,6 +9,9 @@ from rich.table import Table
 
 from . import pipeline
 from .datasources.cache import CACHE
+from .report.generator import _fmt_money as fmt_money
+from .report.generator import _fmt_num as fmt_num
+from .report.generator import _fmt_pct as fmt_pct
 from .storage import repository as repo
 
 # Windows 中文环境（GBK 代码页）下，一旦 stdout/stderr 被重定向或管道接走，
@@ -45,12 +48,15 @@ def analyze(
 
     # 终端摘要
     t = Table(title=f"{report.ticker} 摘要", show_header=False)
+    # 复用报告的格式化函数：缺失值一律 `—`。
+    # 此前市值走 `(x or 0)/1e9`，取不到时会显示成 0.00B——看着像这公司市值为零，
+    # 而不是「没取到」。缺失值绝不能长得像一个确定的数字。
     if report.quote:
-        t.add_row("现价", str(report.quote.price))
-        t.add_row("市值", f"{(report.quote.market_cap or 0)/1e9:.2f}B")
+        t.add_row("现价", fmt_money(report.quote.price))
+        t.add_row("市值", fmt_money(report.quote.market_cap))
     if report.valuation:
-        t.add_row("P/E (TTM)", str(report.valuation.pe_trailing))
-        t.add_row("ROE", f"{report.valuation.roe:.2f}%" if report.valuation.roe else "—")
+        t.add_row("P/E (TTM)", fmt_num(report.valuation.pe_trailing))
+        t.add_row("ROE", fmt_pct(report.valuation.roe))
     t.add_row("年度财报期数", str(len(report.annual_financials)))
     t.add_row("XBRL 年度/季度", f"{len(report.xbrl_annual)} / {len(report.xbrl_quarterly)}")
     t.add_row("三大报表原文", str(len(report.primary_statements)))
